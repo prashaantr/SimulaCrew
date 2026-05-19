@@ -241,7 +241,7 @@ def _live_event_printer():
         if event_type == "round_start":
             title = payload["round_title"]
             mode = str(payload["round_mode"]).upper()
-            print(section(f"{mode} :: {title}"), flush=True)
+            print(section(f"█ {mode} :: {title}"), flush=True)
             return
 
         if event_type == "agent_start":
@@ -251,17 +251,17 @@ def _live_event_printer():
             score = payload.get("interruption_score")
             score_text = f" | interruption score: {score}" if score is not None else ""
             print(
-                color(f"> asking {agent} [{action} turn {turn}]{score_text}", Style.BOLD + Style.YELLOW),
+                color(f"▓ asking {agent} [{action} turn {turn}]{score_text}", Style.BOLD + Style.YELLOW),
                 flush=True,
             )
             rationale = payload.get("interruption_rationale")
             if rationale:
-                print(color(f"  {rationale}", Style.DIM), flush=True)
+                print(color(f"░ {rationale}", Style.DIM), flush=True)
             return
 
         if event_type == "statement":
             statement = payload["statement"]
-            marker = "!" if statement.event_type == "interrupt" else ">"
+            marker = "█" if statement.event_type == "interrupt" else "▓"
             title = f"{marker} {statement.agent_name} replied"
             print(panel(title, statement.content.strip(), width=88), flush=True)
 
