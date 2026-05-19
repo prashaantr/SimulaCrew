@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import re
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Literal, cast
@@ -8,6 +10,7 @@ from typing import Any, Literal, cast
 RoundMode = Literal["private", "debate", "discussion", "interruptions", "synthesis"]
 TranscriptVisibility = Literal["named", "anonymous", "hidden"]
 TurnStrategy = Literal["round_robin", "interruption_priority"]
+OutputFormatType = Literal["markdown", "json", "number", "text"]
 
 
 class ConfigError(ValueError):
@@ -15,64 +18,107 @@ class ConfigError(ValueError):
 
 
 @dataclass(frozen=True)
-class TopicConfig:
+class OutputFormat:
+    """Describes the expected final task result shape."""
+
+    type: OutputFormatType = "text"
+    description: str = ""
+    required_sections: list[str] = field(default_factory=list)
+    json_schema: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | None, *, path: str = "task.output_format") -> "OutputFormat":
+        if data is None:
+            return cls()
+        _ensure_object(data, path)
+        type_value = str(data.get("type", "text")).lower()
+        if type_value not in {"markdown", "json", "number", "text"}:
+            raise ConfigError(f"{path}.type must be one of: markdown, json, number, text")
+        json_schema = data.get("json_schema") or {}
+        if json_schema and not isinstance(json_schema, dict):
+            raise ConfigError(f"{path}.json_schema must be an object.")
+        return cls(
+            type=cast(OutputFormatType, type_value),
+            description=_optional_text(data, "description", "", path),
+            required_sections=_optional_text_list(data, "required_sections", path),
+            json_schema=dict(json_schema),
+        )
+
+    def validate(self, content: str) -> tuple[Any, list[str]]:
+        """Return (parsed_value, errors). parsed_value is the structured task result."""
+        content = (content or "").strip()
+        errors: list[str] = []
+        if self.type == "markdown":
+            for section in self.required_sections:
+                if section.lower() not in content.lower():
+                    errors.append(f"Missing required section: {section}")
+            return content, errors
+        if self.type == "json":
+            try:
+                parsed = json.loads(_strip_code_fence(content))
+            except json.JSONDecodeError as exc:
+                errors.append(f"Invalid JSON: {exc}")
+                return content, errors
+            return parsed, errors
+        if self.type == "number":
+            match = re.search(r"-?\d+(?:\.\d+)?", content)
+            if not match:
+                errors.append("No numeric value found in output.")
+                return content, errors
+            try:
+                value = float(match.group(0))
+            except ValueError as exc:
+                errors.append(f"Could not parse number: {exc}")
+                return content, errors
+            return value, errors
+        return content, errors
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "type": self.type,
+            "description": self.description,
+            "required_sections": list(self.required_sections),
+            "json_schema": dict(self.json_schema),
+        }
+
+
+@dataclass(frozen=True)
+class TaskConfig:
+    """What the team is being asked to do and the shape of its final result."""
+
     title: str
     prompt: str
     target_user: str = "the user"
     success_criteria: str = "useful, specific, feasible, and honest about uncertainty"
+    output_format: OutputFormat = field(default_factory=OutputFormat)
     variables: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "TopicConfig":
-        _ensure_object(data, "topic")
+    def from_dict(cls, data: dict[str, Any]) -> "TaskConfig":
+        _ensure_object(data, "task")
         return cls(
-            title=_required_text(data, "title", "topic"),
-            prompt=_required_text(data, "prompt", "topic"),
-            target_user=_optional_text(data, "target_user", "the user", "topic"),
+            title=_required_text(data, "title", "task"),
+            prompt=_required_text(data, "prompt", "task"),
+            target_user=_optional_text(data, "target_user", "the user", "task"),
             success_criteria=_optional_text(
                 data,
                 "success_criteria",
                 "useful, specific, feasible, and honest about uncertainty",
-                "topic",
+                "task",
             ),
-            variables=_optional_mapping(data, "variables", "topic"),
+            output_format=OutputFormat.from_dict(data.get("output_format")),
+            variables=_optional_mapping(data, "variables", "task"),
         )
 
-
-@dataclass(frozen=True)
-class HarnessConfig:
-    shared_instructions: str = ""
-    character_prompt_template: str = ""
-    interaction_rules: list[str] = field(default_factory=list)
-    interruption_rules: list[str] = field(default_factory=list)
-    output_contract: str = ""
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any] | None) -> "HarnessConfig":
-        if data is None:
-            return cls()
-        _ensure_object(data, "harness")
-        return cls(
-            shared_instructions=_optional_text(
-                data,
-                "shared_instructions",
-                "",
-                "harness",
-            ),
-            character_prompt_template=_optional_text(
-                data,
-                "character_prompt_template",
-                "",
-                "harness",
-            ),
-            interaction_rules=_optional_text_list(data, "interaction_rules", "harness"),
-            interruption_rules=_optional_text_list(
-                data,
-                "interruption_rules",
-                "harness",
-            ),
-            output_contract=_optional_text(data, "output_contract", "", "harness"),
-        )
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "title": self.title,
+            "prompt": self.prompt,
+            "target_user": self.target_user,
+            "success_criteria": self.success_criteria,
+            "output_format": self.output_format.to_dict(),
+            "variables": dict(self.variables),
+        }
 
 
 @dataclass(frozen=True)
@@ -112,6 +158,22 @@ class AgentPersona:
                 f"agents[{agent_id}]",
             ),
         )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "base_prompt": self.base_prompt,
+            "personality": dict(self.personality),
+            "backstory": self.backstory,
+            "speaking_style": self.speaking_style,
+            "knowledge": list(self.knowledge),
+            "skills": list(self.skills),
+            "interests": list(self.interests),
+            "history": list(self.history),
+            "goals": list(self.goals),
+            "constraints": list(self.constraints),
+        }
 
 
 @dataclass(frozen=True)
@@ -171,38 +233,101 @@ class RoundSpec:
             ),
         )
 
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "title": self.title,
+            "mode": self.mode,
+            "prompt": self.prompt,
+            "participants": (
+                list(self.participants)
+                if isinstance(self.participants, list)
+                else self.participants
+            ),
+            "transcript_visibility": self.transcript_visibility,
+            "max_turns": self.max_turns,
+            "turn_strategy": self.turn_strategy,
+            "speaker_id": self.speaker_id,
+            "speaker_name": self.speaker_name,
+            "speaker_prompt": self.speaker_prompt,
+        }
+
 
 @dataclass(frozen=True)
-class CrewConfig:
+class ProcessConfig:
+    """How members are expected to deliberate and reach a final decision."""
+
+    shared_instructions: str = ""
+    character_prompt_template: str = ""
+    interaction_rules: list[str] = field(default_factory=list)
+    interruption_rules: list[str] = field(default_factory=list)
+    rounds: list[RoundSpec] = field(default_factory=list)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "ProcessConfig":
+        _ensure_object(data, "process")
+        round_items = data.get("rounds", [])
+        if not isinstance(round_items, list):
+            raise ConfigError("process.rounds must be a list.")
+        rounds = [RoundSpec.from_dict(item) for item in round_items]
+        if not rounds:
+            raise ConfigError("process.rounds must contain at least one round.")
+        _require_unique_ids("process.rounds", [round_spec.id for round_spec in rounds])
+        return cls(
+            shared_instructions=_optional_text(data, "shared_instructions", "", "process"),
+            character_prompt_template=_optional_text(
+                data, "character_prompt_template", "", "process"
+            ),
+            interaction_rules=_optional_text_list(data, "interaction_rules", "process"),
+            interruption_rules=_optional_text_list(data, "interruption_rules", "process"),
+            rounds=rounds,
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "shared_instructions": self.shared_instructions,
+            "character_prompt_template": self.character_prompt_template,
+            "interaction_rules": list(self.interaction_rules),
+            "interruption_rules": list(self.interruption_rules),
+            "rounds": [round_spec.to_dict() for round_spec in self.rounds],
+        }
+
+
+@dataclass(frozen=True)
+class ExperimentConfig:
+    """A complete experiment: agents + task + process."""
+
     name: str
     description: str
-    topic: TopicConfig
+    task: TaskConfig
+    process: ProcessConfig
     agents: list[AgentPersona]
-    rounds: list[RoundSpec]
-    harness: HarnessConfig = field(default_factory=HarnessConfig)
     metadata: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "CrewConfig":
-        _ensure_object(data, "config")
-        agent_items = data.get("agents", [])
-        if not isinstance(agent_items, list):
-            raise ConfigError("agents must be a list.")
-        agents = [AgentPersona.from_dict(item) for item in agent_items]
-        if not agents:
-            raise ConfigError("config requires at least one agent.")
-        _require_unique_ids("agents", [agent.id for agent in agents])
+    def from_parts(
+        cls,
+        *,
+        name: str,
+        description: str,
+        task: dict[str, Any] | TaskConfig,
+        process: dict[str, Any] | ProcessConfig,
+        agents: list[dict[str, Any]] | list[AgentPersona],
+        metadata: dict[str, Any] | None = None,
+    ) -> "ExperimentConfig":
+        task_config = task if isinstance(task, TaskConfig) else TaskConfig.from_dict(task)
+        process_config = (
+            process if isinstance(process, ProcessConfig) else ProcessConfig.from_dict(process)
+        )
+        agent_list: list[AgentPersona] = []
+        for item in agents:
+            agent_list.append(item if isinstance(item, AgentPersona) else AgentPersona.from_dict(item))
+        if not agent_list:
+            raise ConfigError("experiment requires at least one agent.")
+        _require_unique_ids("agents", [agent.id for agent in agent_list])
 
-        round_items = data.get("rounds", [])
-        if not isinstance(round_items, list):
-            raise ConfigError("rounds must be a list.")
-        rounds = [RoundSpec.from_dict(item) for item in round_items]
-        if not rounds:
-            raise ConfigError("config requires at least one round.")
-        _require_unique_ids("rounds", [round_spec.id for round_spec in rounds])
-
-        agent_ids = {agent.id for agent in agents}
-        for round_spec in rounds:
+        agent_ids = {agent.id for agent in agent_list}
+        for round_spec in process_config.rounds:
             if isinstance(round_spec.participants, list):
                 unknown = sorted(set(round_spec.participants) - agent_ids)
                 if unknown:
@@ -211,14 +336,17 @@ class CrewConfig:
                     )
 
         return cls(
-            name=_required_identifier(data, "name", "config"),
-            description=_optional_text(data, "description", "", "config"),
-            topic=TopicConfig.from_dict(_required_mapping(data, "topic", "config")),
-            agents=agents,
-            rounds=rounds,
-            harness=HarnessConfig.from_dict(data.get("harness")),
-            metadata=_optional_mapping(data, "metadata", "config"),
+            name=name,
+            description=description,
+            task=task_config,
+            process=process_config,
+            agents=agent_list,
+            metadata=metadata or {},
         )
+
+    @property
+    def rounds(self) -> list[RoundSpec]:
+        return self.process.rounds
 
 
 @dataclass(frozen=True)
@@ -256,14 +384,31 @@ class RoundResult:
 
 
 @dataclass(frozen=True)
-class CrewResult:
-    config_name: str
+class ExperimentResult:
+    """Final output of one experiment run.
+
+    - task_result: the final deliverable, parsed into the shape declared by
+      task.output_format. For markdown, this is a string. For json, a dict.
+      For number, a float.
+    - format_check: whether task_result satisfies the declared output format.
+    - transcript: all public interactions, in chronological order.
+    - thinking: per-agent private thoughts (independent positions + stay-quiet
+      notes) — keyed by agent id.
+    """
+
+    experiment_name: str
     description: str
-    topic_title: str
-    topic_prompt: str
+    task_title: str
+    task_prompt: str
+    output_format: OutputFormat
     started_at: str
     provider: str
     model: str
+    task_result: Any
+    raw_task_result: str
+    format_check: dict[str, Any]
+    transcript: list[Statement]
+    thinking: dict[str, list[str]]
     rounds: list[RoundResult]
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -271,40 +416,65 @@ class CrewResult:
     def create(
         cls,
         *,
-        config: CrewConfig,
+        experiment: ExperimentConfig,
         provider: str,
         model: str,
         rounds: list[RoundResult],
+        raw_task_result: str,
+        thinking: dict[str, list[str]],
         metadata: dict[str, Any] | None = None,
-    ) -> "CrewResult":
+    ) -> "ExperimentResult":
+        parsed, errors = experiment.task.output_format.validate(raw_task_result)
+        transcript = [
+            statement
+            for round_result in rounds
+            for statement in round_result.statements
+            if statement.event_type not in {"private", "thought"}
+        ]
         return cls(
-            config_name=config.name,
-            description=config.description,
-            topic_title=config.topic.title,
-            topic_prompt=config.topic.prompt,
+            experiment_name=experiment.name,
+            description=experiment.description,
+            task_title=experiment.task.title,
+            task_prompt=experiment.task.prompt,
+            output_format=experiment.task.output_format,
             started_at=datetime.now(timezone.utc).isoformat(),
             provider=provider,
             model=model,
+            task_result=parsed,
+            raw_task_result=raw_task_result,
+            format_check={
+                "valid": not errors,
+                "errors": errors,
+                "format_type": experiment.task.output_format.type,
+            },
+            transcript=transcript,
+            thinking=thinking,
             rounds=rounds,
             metadata={
-                "agent_count": len(config.agents),
-                "round_count": len(config.rounds),
-                "config_metadata": config.metadata,
+                "agent_count": len(experiment.agents),
+                "round_count": len(experiment.process.rounds),
+                "experiment_metadata": experiment.metadata,
                 **(metadata or {}),
             },
         )
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "config_name": self.config_name,
+            "experiment_name": self.experiment_name,
             "description": self.description,
-            "topic_title": self.topic_title,
-            "topic_prompt": self.topic_prompt,
+            "task_title": self.task_title,
+            "task_prompt": self.task_prompt,
+            "output_format": self.output_format.to_dict(),
             "started_at": self.started_at,
             "provider": self.provider,
             "model": self.model,
-            "metadata": self.metadata,
+            "task_result": self.task_result,
+            "raw_task_result": self.raw_task_result,
+            "format_check": self.format_check,
+            "transcript": [statement.to_dict() for statement in self.transcript],
+            "thinking": {agent_id: list(notes) for agent_id, notes in self.thinking.items()},
             "rounds": [round_result.to_dict() for round_result in self.rounds],
+            "metadata": self.metadata,
         }
 
 
@@ -416,3 +586,12 @@ def _require_unique_ids(label: str, ids: list[str]) -> None:
         seen.add(item_id)
     if duplicates:
         raise ConfigError(f"{label} contains duplicate id(s): {sorted(duplicates)}")
+
+
+def _strip_code_fence(content: str) -> str:
+    content = content.strip()
+    if content.startswith("```"):
+        content = content.strip("`")
+        if content.lower().startswith("json"):
+            content = content[4:].strip()
+    return content

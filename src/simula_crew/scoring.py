@@ -6,7 +6,7 @@ from typing import Any, Protocol
 
 from simula_crew.clients import ModelClient
 from simula_crew.prompts import format_transcript
-from simula_crew.schema import AgentPersona, CrewConfig, RoundSpec, Statement
+from simula_crew.schema import AgentPersona, ExperimentConfig, RoundSpec, Statement
 
 
 @dataclass(frozen=True)
@@ -23,7 +23,7 @@ class InterruptionClassifier(Protocol):
         self,
         *,
         agent: AgentPersona,
-        config: CrewConfig,
+        experiment: ExperimentConfig,
         round_spec: RoundSpec,
         transcript: list[Statement],
         turn_number: int,
@@ -40,7 +40,7 @@ class DeterministicInterruptionClassifier:
         self,
         *,
         agent: AgentPersona,
-        config: CrewConfig,
+        experiment: ExperimentConfig,
         round_spec: RoundSpec,
         transcript: list[Statement],
         turn_number: int,
@@ -80,7 +80,7 @@ class LLMInterruptionClassifier:
         self,
         *,
         agent: AgentPersona,
-        config: CrewConfig,
+        experiment: ExperimentConfig,
         round_spec: RoundSpec,
         transcript: list[Statement],
         turn_number: int,
@@ -109,8 +109,8 @@ Agent:
 - goals: {json.dumps(agent.goals)}
 - constraints: {json.dumps(agent.constraints)}
 
-Topic:
-{config.topic.prompt}
+Task:
+{experiment.task.prompt}
 
 Round:
 - title: {round_spec.title}
@@ -118,7 +118,7 @@ Round:
 - turn number: {turn_number}
 
 Interruption rules:
-{chr(10).join(f"- {rule}" for rule in config.harness.interruption_rules)}
+{chr(10).join(f"- {rule}" for rule in experiment.process.interruption_rules)}
 
 Transcript:
 {format_transcript(transcript, visibility="named")}
@@ -163,7 +163,7 @@ Return JSON with:
         except Exception as exc:
             fallback = self.fallback.score(
                 agent=agent,
-                config=config,
+                experiment=experiment,
                 round_spec=round_spec,
                 transcript=transcript,
                 turn_number=turn_number,
@@ -228,7 +228,7 @@ def deterministic_interruption_score(
 def choose_interrupting_agent(
     *,
     agents: list[AgentPersona],
-    config: CrewConfig,
+    experiment: ExperimentConfig,
     round_spec: RoundSpec,
     transcript: list[Statement],
     turn_number: int,
@@ -237,7 +237,7 @@ def choose_interrupting_agent(
     decisions = [
         classifier.score(
             agent=agent,
-            config=config,
+            experiment=experiment,
             round_spec=round_spec,
             transcript=transcript,
             turn_number=turn_number,

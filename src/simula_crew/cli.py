@@ -10,18 +10,18 @@ from pathlib import Path
 from textwrap import dedent, wrap as wrap_text
 
 from simula_crew.clients import create_client
-from simula_crew.engine import run_crew
+from simula_crew.engine import run_experiment
 from simula_crew.google_drive import load_google_sheet_rows
 from simula_crew.ingest import (
     DocumentText,
     agents_from_survey_rows,
-    build_survey_crew_config,
+    build_survey_experiment_bundle,
     load_survey_csv,
 )
-from simula_crew.io import list_configs, load_config, save_result
+from simula_crew.io import list_experiments, load_experiment, save_experiment_result
 from simula_crew.runtime import apply_runtime_inputs, parse_variable_assignments
 from simula_crew.scoring import LLMInterruptionClassifier
-from simula_crew.schema import ConfigError, CrewResult
+from simula_crew.schema import ConfigError, ExperimentResult
 from simula_crew.terminal import (
     Style,
     banner,
@@ -45,32 +45,36 @@ def build_parser() -> argparse.ArgumentParser:
             """
             examples:
               simulacrew list
-              simulacrew inspect configs/simulacra.json
-              simulacrew run configs/simulacra.json
-              simulacrew run configs/simulacra.json --prompt "What should the crew decide?"
-              simulacrew run configs/simulacra.json --provider claude --interruption-classifier llm --prompt-file challenge.txt
-            """
+              simulacrew inspect configs/experiments/simulacra.yaml
+              simulacrew run configs/experiments/simulacra.yaml
+              simulacrew run configs/experiments/simulacra.yaml --prompt "What should the crew decide?"
+              simulacrew run configs/experiments/simulacra.yaml --provider claude --interruption-classifier llm --prompt-file challenge.txt
+"""
         ),
     )
     subparsers = parser.add_subparsers(dest="command")
 
-    list_parser = subparsers.add_parser("list", help="List available presets.")
-    list_parser.add_argument("--config-dir", default="configs")
+    list_parser = subparsers.add_parser("list", help="List available experiments.")
+    list_parser.add_argument("--experiments-dir", default="configs/experiments")
 
-    inspect_parser = subparsers.add_parser("inspect", help="Show preset details.")
-    inspect_parser.add_argument("config")
+    inspect_parser = subparsers.add_parser("inspect", help="Show experiment details.")
+    inspect_parser.add_argument("experiment")
 
     ingest_parser = subparsers.add_parser(
         "ingest-survey",
-        help="Generate a crew config from a survey CSV export.",
+        help="Generate a SimulaCrew experiment bundle from a survey CSV export.",
     )
     ingest_parser.add_argument("survey_csv")
-    ingest_parser.add_argument("--output", required=True)
     ingest_parser.add_argument(
-        "--topic",
+        "--output-dir",
+        required=True,
+        help="Directory where the experiment bundle (experiment + task + process + agents) is written.",
+    )
+    ingest_parser.add_argument(
+        "--task-prompt",
         default="Deliberate as a team and produce the best final artifact for the task.",
     )
-    ingest_parser.add_argument("--name", default="survey_team")
+    ingest_parser.add_argument("--name", default="survey-team")
     ingest_parser.add_argument(
         "--document-text-dir",
         default=None,
@@ -84,20 +88,24 @@ def build_parser() -> argparse.ArgumentParser:
 
     google_ingest_parser = subparsers.add_parser(
         "ingest-google-survey",
-        help="Generate a crew config from a Google Sheets survey using Google auth.",
+        help="Generate a SimulaCrew experiment bundle from a Google Sheets survey using Google auth.",
     )
     google_ingest_parser.add_argument("sheet_url")
-    google_ingest_parser.add_argument("--output", required=True)
+    google_ingest_parser.add_argument(
+        "--output-dir",
+        required=True,
+        help="Directory where the experiment bundle is written.",
+    )
     google_ingest_parser.add_argument(
         "--credentials-file",
         default=None,
         help="Optional service-account JSON file. If omitted, application default credentials are used.",
     )
     google_ingest_parser.add_argument(
-        "--topic",
+        "--task-prompt",
         default="Deliberate as a team and produce the best final artifact for the task.",
     )
-    google_ingest_parser.add_argument("--name", default="survey_team")
+    google_ingest_parser.add_argument("--name", default="survey-team")
     google_ingest_parser.add_argument(
         "--document-text-dir",
         default=None,
@@ -109,8 +117,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Only print the output path.",
     )
 
-    run_parser = subparsers.add_parser("run", help="Run a crew preset.")
-    run_parser.add_argument("config")
+    run_parser = subparsers.add_parser("run", help="Run an experiment.")
+    run_parser.add_argument("experiment")
     run_parser.add_argument("--prompt", default=None)
     run_parser.add_argument("--prompt-file", default=None)
     run_parser.add_argument("--var", action="append", default=None, metavar="KEY=VALUE")
@@ -158,9 +166,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.command == "list":
-        return _list_presets(args.config_dir)
+        return _list_experiments(args.experiments_dir)
     if args.command == "inspect":
-        return _inspect(args.config)
+        return _inspect(args.experiment)
     if args.command == "ingest-survey":
         return _ingest_survey(args, parser)
     if args.command == "ingest-google-survey":
@@ -181,27 +189,23 @@ def _ingest_survey(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
         )
         if not agents:
             parser.error("survey CSV did not contain any usable response rows")
-        payload = build_survey_crew_config(
-            agents,
+        written = _write_survey_bundle(
+            agents=agents,
             name=args.name,
-            topic_prompt=args.topic,
-        )
-        output_path = Path(args.output)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(
-            json.dumps(payload, indent=2) + "\n",
-            encoding="utf-8",
+            task_prompt=args.task_prompt,
+            output_dir=Path(args.output_dir),
         )
     except OSError as exc:
         parser.exit(2, f"error: {exc}\n")
 
     if args.quiet:
-        print(output_path)
+        print(written["experiment"])
         return 0
 
     print(section("Survey Ingestion"))
     print(key_value("Agents", str(len(agents))))
-    print(key_value("Output", str(output_path)))
+    for label, path in written.items():
+        print(key_value(label.capitalize(), str(path)))
     return 0
 
 
@@ -217,28 +221,50 @@ def _ingest_google_survey(args: argparse.Namespace, parser: argparse.ArgumentPar
         )
         if not agents:
             parser.error("Google Sheet did not contain any usable response rows")
-        payload = build_survey_crew_config(
-            agents,
+        written = _write_survey_bundle(
+            agents=agents,
             name=args.name,
-            topic_prompt=args.topic,
-        )
-        output_path = Path(args.output)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(
-            json.dumps(payload, indent=2) + "\n",
-            encoding="utf-8",
+            task_prompt=args.task_prompt,
+            output_dir=Path(args.output_dir),
         )
     except (OSError, RuntimeError, ValueError) as exc:
         parser.exit(2, f"error: {exc}\n")
 
     if args.quiet:
-        print(output_path)
+        print(written["experiment"])
         return 0
 
     print(section("Google Survey Ingestion"))
     print(key_value("Agents", str(len(agents))))
-    print(key_value("Output", str(output_path)))
+    for label, path in written.items():
+        print(key_value(label.capitalize(), str(path)))
     return 0
+
+
+def _write_survey_bundle(
+    *,
+    agents,
+    name: str,
+    task_prompt: str,
+    output_dir: Path,
+) -> dict[str, Path]:
+    import yaml as _yaml
+
+    bundle = build_survey_experiment_bundle(
+        agents,
+        name=name,
+        task_prompt=task_prompt,
+    )
+    output_dir.mkdir(parents=True, exist_ok=True)
+    paths: dict[str, Path] = {}
+    for label in ("task", "process", "agents"):
+        target = output_dir / f"{label}.json"
+        target.write_text(json.dumps(bundle[label], indent=2) + "\n", encoding="utf-8")
+        paths[label] = target
+    experiment_path = output_dir / "experiment.yaml"
+    experiment_path.write_text(_yaml.safe_dump(bundle["experiment"], sort_keys=False), encoding="utf-8")
+    paths["experiment"] = experiment_path
+    return paths
 
 
 def _load_document_text_dir(path: str | None) -> dict[str, list[DocumentText]]:
@@ -256,45 +282,49 @@ def _load_document_text_dir(path: str | None) -> dict[str, list[DocumentText]]:
     return documents
 
 
-def _list_presets(config_dir: str) -> int:
+def _list_experiments(experiments_dir: str) -> int:
     print(logo())
     print(banner("Agent Debate CLI", "personality-driven crews with interruption mechanics"))
-    configs = list_configs(config_dir)
-    if not configs:
-        print("No presets found.")
+    experiments = list_experiments(experiments_dir)
+    if not experiments:
+        print("No experiments found.")
         return 0
-    print(section("Presets"))
-    for config_path in configs:
-        config = load_config(config_path)
-        print(panel(config.name, f"{config.description}\npath: {config_path}", width=88))
+    print(section("Experiments"))
+    for experiment_path in experiments:
+        experiment = load_experiment(experiment_path)
+        print(panel(experiment.name, f"{experiment.description}\npath: {experiment_path}", width=88))
     return 0
 
 
-def _inspect(config_path: str) -> int:
-    config = load_config(config_path)
+def _inspect(experiment_path: str) -> int:
+    experiment = load_experiment(experiment_path)
     print(logo())
-    print(banner(config.name, config.description))
+    print(banner(experiment.name, experiment.description))
     print(
         card(
-            "Preset",
+            "Experiment",
             [
-                ("file", config_path),
-                ("agents", str(len(config.agents))),
-                ("rounds", str(len(config.rounds))),
-                ("topic", config.topic.title),
+                ("file", experiment_path),
+                ("agents", str(len(experiment.agents))),
+                ("rounds", str(len(experiment.process.rounds))),
+                ("task", experiment.task.title),
+                ("output_format", experiment.task.output_format.type),
             ],
             width=88,
         )
     )
-    print(section("Topic"))
-    print(wrap(config.topic.prompt))
+    print(section("Task"))
+    print(wrap(experiment.task.prompt))
+    if experiment.task.output_format.description:
+        print(section("Expected output"))
+        print(wrap(experiment.task.output_format.description))
     print(section("Agents"))
-    for agent in config.agents:
+    for agent in experiment.agents:
         print(panel(agent.name, agent.base_prompt, width=88))
         if agent.personality:
             traits = ", ".join(f"{key}={value}" for key, value in sorted(agent.personality.items()))
             print("  " + color(traits, Style.DIM))
-    print(section("Rounds"))
+    print(section("Process"))
     print(
         tree(
             [
@@ -302,7 +332,7 @@ def _inspect(config_path: str) -> int:
                     round_spec.title,
                     f"[{round_spec.mode}, max_turns={round_spec.max_turns or 'n/a'}]",
                 )
-                for round_spec in config.rounds
+                for round_spec in experiment.process.rounds
             ]
         )
     )
@@ -316,8 +346,8 @@ def _run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
         parser.error("--temperature must be between 0 and 2")
 
     try:
-        config = apply_runtime_inputs(
-            load_config(args.config),
+        experiment = apply_runtime_inputs(
+            load_experiment(args.experiment),
             prompt=args.prompt,
             prompt_file=args.prompt_file,
             variables=parse_variable_assignments(args.var),
@@ -332,12 +362,12 @@ def _run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
             )
         event_callback = None
         if not args.quiet and not args.no_live:
-            _print_run_header(config.name, config.topic.title, args.provider, model)
+            _print_run_header(experiment.name, experiment.task.title, args.provider, model)
             event_callback = _live_event_printer(
                 show_interruption_notes=args.show_interruption_notes,
             )
-        result = run_crew(
-            config=config,
+        result = run_experiment(
+            experiment=experiment,
             client=client,
             model=model,
             temperature=args.temperature,
@@ -345,12 +375,12 @@ def _run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
             interruption_classifier=interruption_classifier,
             event_callback=event_callback,
             run_metadata={
-                "config_path": str(Path(args.config)),
+                "experiment_path": str(Path(args.experiment)),
                 "output_dir": str(Path(args.output_dir)),
                 "interruption_classifier": args.interruption_classifier,
             },
         )
-        json_path, conversation_path = save_result(result, args.output_dir)
+        json_path, conversation_path = save_experiment_result(result, args.output_dir)
     except (ConfigError, RuntimeError, ValueError) as exc:
         parser.exit(2, f"error: {exc}\n")
 
@@ -666,9 +696,9 @@ class TypingIndicator:
             index += 1
             time.sleep(0.25)
 
-def _print_run_summary(result: CrewResult) -> None:
+def _print_run_summary(result: ExperimentResult) -> None:
     print(logo())
-    print(banner("SimulaCrew Run Complete", result.topic_title))
+    print(banner("SimulaCrew Run Complete", result.task_title))
     print(section("Run"))
     print(
         card(
@@ -677,7 +707,8 @@ def _print_run_summary(result: CrewResult) -> None:
                 ("provider", result.provider),
                 ("model", result.model),
                 ("rounds", str(len(result.rounds))),
-                ("config", result.config_name),
+                ("experiment", result.experiment_name),
+                ("format_valid", str(result.format_check.get("valid"))),
             ],
             width=88,
         )

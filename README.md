@@ -33,6 +33,41 @@ Personality-driven agent simulation harness with realistic group chat, natural i
 +--------------------------------------------------------------------------------+
 ```
 
+## Config Layout
+
+An experiment is split across four files. The experiment file references the
+other three so they can be mixed and matched independently.
+
+```text
+configs/
+  experiments/simulacra.yaml   # top-level: name + refs to task/process/agents
+  tasks/simulacra.json         # what the team is asked to do + output format
+  processes/simulacra.json     # how they deliberate (rounds, rules, templates)
+  agents/simulacra.json        # who is on the team
+```
+
+The task config declares the expected output format (markdown / json / number /
+text) and required sections. After each run, SimulaCrew validates the final
+synthesis against this contract and reports a `format_check` field in the
+output JSON.
+
+Each run writes one JSON artifact (plus a compact `.txt` log) with this shape:
+
+```json
+{
+  "experiment_name": "simulacra",
+  "task_result": "...",          // parsed into the format declared by the task
+  "format_check": {"valid": true, "errors": [], "format_type": "markdown"},
+  "transcript": [ ... ],         // public interactions only
+  "thinking": {                  // private thoughts, keyed by agent id
+    "mara": ["...", "..."],
+    "niko": ["..."]
+  },
+  "rounds": [ ... ],
+  "metadata": { ... }
+}
+```
+
 ## What It Does
 
 SimulaCrew runs small crews of LLM agents whose behavior is shaped by configurable personality/questionnaire fields. Agents first read the prompt independently, then talk in a normal group chat where a high-interruption persona can cut in naturally. The default preset is a hackathon-style crew: it has a 20-minute discussion cap, tries to converge on one project idea, then outputs a compact PRD.
@@ -96,13 +131,13 @@ simulacrew list
 Inspect the test preset:
 
 ```bash
-simulacrew inspect configs/simulacra.json
+simulacrew inspect configs/experiments/simulacra.yaml
 ```
 
 Run a no-API dry run:
 
 ```bash
-simulacrew run configs/simulacra.json
+simulacrew run configs/experiments/simulacra.yaml
 ```
 
 This is called `dry-run` because it does not call Claude or OpenAI. It uses deterministic placeholder responses so you can test install, CLI rendering, file output, state updates, and stopping logic without spending API calls.
@@ -110,7 +145,7 @@ This is called `dry-run` because it does not call Claude or OpenAI. It uses dete
 Run a real Claude simulation:
 
 ```bash
-simulacrew run configs/simulacra.json \
+simulacrew run configs/experiments/simulacra.yaml \
   --provider claude \
   --model sonnet \
   --interruption-classifier llm \
@@ -135,8 +170,8 @@ Generate a crew config from a local Google Forms CSV export:
 
 ```bash
 simulacrew ingest-survey responses.csv \
-  --output configs/generated/buildathon-team.json \
-  --topic "Design a prototype for studying how AI is reshaping jobs and the economy."
+  --output-dir configs/generated/buildathon-team \
+  --task-prompt "Design a prototype for studying how AI is reshaping jobs and the economy."
 ```
 
 If you have resume/CV text extracted locally, put files in a directory named by
@@ -145,7 +180,7 @@ the generated person id, for example `daniel-rock.txt`, then include them:
 ```bash
 simulacrew ingest-survey responses.csv \
   --document-text-dir extracted_profiles \
-  --output configs/generated/buildathon-team.json
+  --output-dir configs/generated/buildathon-team
 ```
 
 Generate the same config directly from a Google Sheet using Google auth:
@@ -154,7 +189,7 @@ Generate the same config directly from a Google Sheet using Google auth:
 simulacrew ingest-google-survey \
   "https://docs.google.com/spreadsheets/d/<sheet-id>/edit?gid=<gid>#gid=<gid>" \
   --credentials-file service-account.json \
-  --output configs/generated/buildathon-team.json
+  --output-dir configs/generated/buildathon-team
 ```
 
 For the most reliable local smoke test, use a service-account JSON and share
@@ -169,20 +204,20 @@ By default the CLI prints a live, [jury-sim-style conversation](https://github.c
 To disable live output and print only the final summary:
 
 ```bash
-simulacrew run configs/simulacra.json --no-live
+simulacrew run configs/experiments/simulacra.yaml --no-live
 ```
 
 Run with a custom prompt:
 
 ```bash
-simulacrew run configs/simulacra.json \
+simulacrew run configs/experiments/simulacra.yaml \
   --prompt "Should we build a moral deliberation simulator or a general agent harness first?"
 ```
 
 Run with Claude Agent SDK:
 
 ```bash
-simulacrew run configs/simulacra.json \
+simulacrew run configs/experiments/simulacra.yaml \
   --provider claude \
   --prompt-file challenge.txt
 ```
@@ -190,7 +225,7 @@ simulacrew run configs/simulacra.json \
 Run with Claude and an inline one-line prompt:
 
 ```bash
-simulacrew run configs/simulacra.json \
+simulacrew run configs/experiments/simulacra.yaml \
   --provider claude \
   --interruption-classifier llm \
   --prompt "Should we build the moral deliberation simulator first or the general agent harness first?"
@@ -201,7 +236,7 @@ Keep inline prompts on one line unless you intentionally want a newline inside t
 Use Claude for interruption classification too:
 
 ```bash
-simulacrew run configs/simulacra.json \
+simulacrew run configs/experiments/simulacra.yaml \
   --provider claude \
   --interruption-classifier llm \
   --prompt-file challenge.txt
@@ -210,7 +245,7 @@ simulacrew run configs/simulacra.json \
 When `--provider claude` is used without `--model`, SimulaCrew defaults to `haiku` for faster agent turns. You can override it with the exact Claude model alias your Claude Agent SDK install supports:
 
 ```bash
-simulacrew run configs/simulacra.json \
+simulacrew run configs/experiments/simulacra.yaml \
   --provider claude \
   --model opus \
   --interruption-classifier llm \
@@ -233,13 +268,13 @@ The final recorder turn contains the PRD. The conversation log is intentionally 
 | simulacrew list                                                                |
 |   show available presets                                                       |
 |                                                                                |
-| simulacrew inspect configs/simulacra.json                                      |
+| simulacrew inspect configs/experiments/simulacra.yaml                                      |
 |   show topic, agents, traits, and rounds                                       |
 |                                                                                |
-| simulacrew run configs/simulacra.json                                          |
+| simulacrew run configs/experiments/simulacra.yaml                                          |
 |   run dry-run mode without an API                                              |
 |                                                                                |
-| simulacrew run configs/simulacra.json --provider claude --model opus           |
+| simulacrew run configs/experiments/simulacra.yaml --provider claude --model opus           |
 |   run live agents through Claude Agent SDK                                     |
 +--------------------------------------------------------------------------------+
 
@@ -531,7 +566,7 @@ In live mode, SimulaCrew prints a thinking line for every agent as soon as that 
 
 Those private calls may finish in a different order, but the saved private round is kept in configured agent order.
 
-Configure the worker count in `configs/simulacra.json`:
+Configure the worker count in `configs/experiments/simulacra.yaml`:
 
 ```json
 {
@@ -616,7 +651,7 @@ Mara  cuts in  15:46:25
 Internal interruption scores and classifier notes are hidden by default because they make the run feel less like a real group chat. To debug them:
 
 ```bash
-simulacrew run configs/simulacra.json --show-interruption-notes
+simulacrew run configs/experiments/simulacra.yaml --show-interruption-notes
 ```
 
 The normal CLI shows buy-in and current idea state after public group-chat turns. This state is for the human operator; it is not fed back into the speaking agents.
@@ -821,7 +856,7 @@ The live path works like this after every public group-chat message:
 
 Each update is independent and can run in parallel because one agent's private buy-in calculation does not need another agent's private buy-in calculation.
 
-Configure this in `configs/simulacra.json`:
+Configure this in `configs/experiments/simulacra.yaml`:
 
 ```json
 {
@@ -855,7 +890,7 @@ The default task is:
 Converge on one concrete hackathon project idea and then produce a useful PRD for building it.
 ```
 
-This is configured in `configs/simulacra.json` under `topic.variables`:
+This is configured in `configs/experiments/simulacra.yaml` under `topic.variables`:
 
 ```json
 {
@@ -930,7 +965,7 @@ Personality, backstory, skills, interests, history, knowledge, and speaking styl
 }
 ```
 
-The harness turns those fields into private character prompts with `harness.character_prompt_template`. This is the place to put agent creation instructions. If you want different characters, edit the agent objects and the template in `configs/simulacra.json`.
+The harness turns those fields into private character prompts with `harness.character_prompt_template`. This is the place to put agent creation instructions. If you want different characters, edit the agent objects and the template in `configs/experiments/simulacra.yaml`.
 
 Skills, interests, and past experience are considered through the character prompt, not through a separate hard-coded rule. They affect:
 
@@ -1028,7 +1063,7 @@ The default output contract asks for:
 - open questions,
 - immediate build plan.
 
-Edit `harness.output_contract` in `configs/simulacra.json` to change the final artifact.
+Edit `harness.output_contract` in `configs/experiments/simulacra.yaml` to change the final artifact.
 
 ## Research Basis
 
@@ -1047,7 +1082,7 @@ The preset uses these as design constraints, not as a claim that LLM agents perf
 ```bash
 PYTHONPATH=src python3 -m unittest discover -s tests -v
 python3 -m compileall -q src tests
-simulacrew run configs/simulacra.json --max-agents 2 --output-dir runs/smoke
+simulacrew run configs/experiments/simulacra.yaml --max-agents 2 --output-dir runs/smoke
 ```
 
 ## Project Layout

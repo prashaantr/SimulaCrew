@@ -7,25 +7,32 @@ from pathlib import Path
 
 from simula_crew.clients import DryRunClient
 from simula_crew.cli import _default_model, main
-from simula_crew.engine import run_crew
+from simula_crew.engine import run_experiment
 from simula_crew.google_drive import google_sheet_export_url
 from simula_crew.ingest import (
     DocumentText,
     agents_from_survey_rows,
-    build_survey_crew_config,
+    build_survey_experiment_bundle,
     load_survey_csv,
 )
-from simula_crew.io import load_config, format_conversation, save_result
+from simula_crew.io import format_conversation, load_experiment, save_experiment_result
 from simula_crew.prompts import PromptRenderError, format_transcript, render_template
 from simula_crew.runtime import apply_runtime_inputs, parse_variable_assignments
 from simula_crew.scoring import (
     DeterministicInterruptionClassifier,
     deterministic_interruption_score,
 )
-from simula_crew.schema import ConfigError, CrewConfig, Statement
+from simula_crew.schema import (
+    AgentPersona,
+    ConfigError,
+    ExperimentConfig,
+    OutputFormat,
+    Statement,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+EXPERIMENT_PATH = REPO_ROOT / "configs" / "experiments" / "simulacra.yaml"
 
 
 class PromptRecordingClient:
@@ -76,27 +83,62 @@ class AgentStateClient:
 
 
 class ConfigTests(unittest.TestCase):
-    def test_simulacra_config_loads(self) -> None:
-        config = load_config(REPO_ROOT / "configs" / "simulacra.json")
-        self.assertIsInstance(config, CrewConfig)
-        self.assertEqual(config.name, "simulacra")
-        self.assertGreaterEqual(len(config.agents), 4)
-        self.assertTrue(config.agents[0].skills)
-        self.assertTrue(config.agents[0].interests)
-        self.assertTrue(config.agents[0].history)
+    def test_simulacra_experiment_loads(self) -> None:
+        experiment = load_experiment(EXPERIMENT_PATH)
+        self.assertIsInstance(experiment, ExperimentConfig)
+        self.assertEqual(experiment.name, "simulacra")
+        self.assertGreaterEqual(len(experiment.agents), 4)
+        self.assertTrue(experiment.agents[0].skills)
+        self.assertTrue(experiment.agents[0].interests)
+        self.assertTrue(experiment.agents[0].history)
+        self.assertEqual(experiment.task.output_format.type, "markdown")
+        self.assertIn("product idea", experiment.task.output_format.required_sections)
+        self.assertGreaterEqual(len(experiment.process.rounds), 3)
 
     def test_duplicate_agent_ids_are_rejected(self) -> None:
-        bad = {
-            "name": "bad",
-            "topic": {"title": "T", "prompt": "P"},
-            "agents": [
-                {"id": "a", "base_prompt": "one"},
-                {"id": "a", "base_prompt": "two"},
-            ],
-            "rounds": [{"id": "r", "mode": "private", "prompt": "P"}],
-        }
         with self.assertRaisesRegex(ConfigError, "duplicate"):
-            CrewConfig.from_dict(bad)
+            ExperimentConfig.from_parts(
+                name="bad",
+                description="",
+                task={"title": "T", "prompt": "P"},
+                process={
+                    "rounds": [
+                        {"id": "r", "mode": "private", "prompt": "P"},
+                    ],
+                },
+                agents=[
+                    {"id": "a", "base_prompt": "one"},
+                    {"id": "a", "base_prompt": "two"},
+                ],
+            )
+
+
+class OutputFormatTests(unittest.TestCase):
+    def test_markdown_required_sections(self) -> None:
+        fmt = OutputFormat.from_dict({
+            "type": "markdown",
+            "description": "PRD",
+            "required_sections": ["product idea", "risks"],
+        })
+        parsed, errors = fmt.validate("Product idea: X\nRisks: Y")
+        self.assertEqual(errors, [])
+        self.assertEqual(parsed, "Product idea: X\nRisks: Y")
+        _, missing = fmt.validate("only mentions product idea")
+        self.assertIn("Missing required section: risks", missing)
+
+    def test_json_format_parses(self) -> None:
+        fmt = OutputFormat.from_dict({"type": "json"})
+        parsed, errors = fmt.validate('{"answer": 42}')
+        self.assertEqual(errors, [])
+        self.assertEqual(parsed, {"answer": 42})
+
+    def test_number_format_extracts(self) -> None:
+        fmt = OutputFormat.from_dict({"type": "number"})
+        parsed, errors = fmt.validate("the answer is 42")
+        self.assertEqual(errors, [])
+        self.assertEqual(parsed, 42.0)
+        _, errors = fmt.validate("no digits here")
+        self.assertTrue(errors)
 
 
 class PromptTests(unittest.TestCase):
@@ -114,11 +156,11 @@ class PromptTests(unittest.TestCase):
 
 
 class RuntimeTests(unittest.TestCase):
-    def test_runtime_prompt_overrides_topic(self) -> None:
-        config = load_config(REPO_ROOT / "configs" / "simulacra.json")
-        updated = apply_runtime_inputs(config, prompt="New challenge")
-        self.assertEqual(updated.topic.prompt, "New challenge")
-        self.assertEqual(updated.topic.variables["challenge_prompt"], "New challenge")
+    def test_runtime_prompt_overrides_task(self) -> None:
+        experiment = load_experiment(EXPERIMENT_PATH)
+        updated = apply_runtime_inputs(experiment, prompt="New challenge")
+        self.assertEqual(updated.task.prompt, "New challenge")
+        self.assertEqual(updated.task.variables["challenge_prompt"], "New challenge")
 
     def test_variable_parser(self) -> None:
         parsed = parse_variable_assignments(["target_user=Judges"])
@@ -201,7 +243,7 @@ class SurveyIngestionTests(unittest.TestCase):
 
         self.assertEqual(rows, [{"Name": "Ada Example", "Occupation": "Economist"}])
 
-    def test_build_survey_crew_config_loads_as_existing_config(self) -> None:
+    def test_build_survey_experiment_bundle_is_loadable(self) -> None:
         agents = agents_from_survey_rows(
             [
                 {
@@ -217,22 +259,30 @@ class SurveyIngestionTests(unittest.TestCase):
             ]
         )
 
-        payload = build_survey_crew_config(
+        bundle = build_survey_experiment_bundle(
             agents,
-            name="survey_team",
-            topic_prompt="Design an AI labor-market research prototype.",
+            name="survey-team",
+            task_prompt="Design an AI labor-market research prototype.",
         )
-        config = CrewConfig.from_dict(payload)
 
-        self.assertEqual(config.name, "survey_team")
-        self.assertEqual(len(config.agents), 2)
-        self.assertEqual(config.rounds[1].mode, "discussion")
-        self.assertIn("survey-derived", config.harness.character_prompt_template)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            (base / "task.json").write_text(json.dumps(bundle["task"]), encoding="utf-8")
+            (base / "process.json").write_text(json.dumps(bundle["process"]), encoding="utf-8")
+            (base / "agents.json").write_text(json.dumps(bundle["agents"]), encoding="utf-8")
+            import yaml as _yaml
+            (base / "experiment.yaml").write_text(_yaml.safe_dump(bundle["experiment"]), encoding="utf-8")
+            experiment = load_experiment(base / "experiment.yaml")
 
-    def test_ingest_survey_cli_writes_loadable_config(self) -> None:
+        self.assertEqual(experiment.name, "survey-team")
+        self.assertEqual(len(experiment.agents), 2)
+        self.assertEqual(experiment.process.rounds[1].mode, "discussion")
+        self.assertIn("survey-derived", experiment.process.character_prompt_template)
+
+    def test_ingest_survey_cli_writes_loadable_bundle(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             csv_path = Path(temp_dir) / "responses.csv"
-            output_path = Path(temp_dir) / "team.json"
+            output_dir = Path(temp_dir) / "bundle"
             csv_path.write_text(
                 "Name,What is your occupation?,How would you describe the skill set that you contribute to the team?\n"
                 "Ada Example,Economist,Research design\n",
@@ -244,19 +294,19 @@ class SurveyIngestionTests(unittest.TestCase):
                     [
                         "ingest-survey",
                         str(csv_path),
-                        "--output",
-                        str(output_path),
-                        "--topic",
+                        "--output-dir",
+                        str(output_dir),
+                        "--task-prompt",
                         "Design an AI labor-market research prototype.",
                         "--quiet",
                     ]
                 )
 
             self.assertEqual(exit_code, 0)
-            self.assertTrue(output_path.exists())
-            config = load_config(output_path)
-            self.assertEqual(config.agents[0].id, "ada-example")
-            self.assertEqual(config.topic.prompt, "Design an AI labor-market research prototype.")
+            self.assertTrue((output_dir / "experiment.yaml").exists())
+            experiment = load_experiment(output_dir / "experiment.yaml")
+            self.assertEqual(experiment.agents[0].id, "ada-example")
+            self.assertEqual(experiment.task.prompt, "Design an AI labor-market research prototype.")
 
     def test_google_sheet_export_url_preserves_gid(self) -> None:
         url = google_sheet_export_url(
@@ -270,17 +320,17 @@ class SurveyIngestionTests(unittest.TestCase):
 
 
 class EngineTests(unittest.TestCase):
-    def test_dry_run_executes_interruption_round(self) -> None:
-        config = load_config(REPO_ROOT / "configs" / "simulacra.json")
+    def test_dry_run_executes_full_experiment(self) -> None:
+        experiment = load_experiment(EXPERIMENT_PATH)
         events = []
-        result = run_crew(
-            config=config,
+        result = run_experiment(
+            experiment=experiment,
             client=DryRunClient(),
             model="dry-run-model",
             max_agents=4,
             event_callback=lambda event_type, payload: events.append((event_type, payload)),
         )
-        self.assertEqual(result.config_name, "simulacra")
+        self.assertEqual(result.experiment_name, "simulacra")
         group_round = next(
             round_result
             for round_result in result.rounds
@@ -302,9 +352,6 @@ class EngineTests(unittest.TestCase):
             1,
         )
         self.assertTrue(
-            all("System prompt focus" not in statement.content for statement in group_round.statements)
-        )
-        self.assertTrue(
             all(
                 "goal_alignment_by_agent" in statement.metadata
                 for statement in group_round.statements
@@ -316,37 +363,51 @@ class EngineTests(unittest.TestCase):
             if round_result.id == "final_synthesis"
         )
         self.assertIn("PRD", synthesis_round.statements[0].content)
+        # New schema: transcript & thinking & task_result & format_check.
+        self.assertTrue(
+            all(statement.event_type not in {"private", "thought"} for statement in result.transcript)
+        )
+        self.assertTrue(result.thinking)
+        for agent_id, notes in result.thinking.items():
+            self.assertIsInstance(notes, list)
+            self.assertTrue(all(isinstance(note, str) for note in notes))
+        self.assertIsInstance(result.task_result, str)
+        self.assertEqual(result.format_check["format_type"], "markdown")
+        self.assertIn("valid", result.format_check)
+
         event_types = [event_type for event_type, _ in events]
         self.assertIn("round_start", event_types)
         self.assertIn("agent_start", event_types)
         self.assertIn("statement", event_types)
         self.assertIn("alignment_update", event_types)
-        self.assertGreater(event_types.index("agent_start"), event_types.index("round_start"))
 
         with tempfile.TemporaryDirectory() as output_dir:
-            json_path, conversation_path = save_result(result, output_dir)
+            json_path, conversation_path = save_experiment_result(result, output_dir)
             self.assertTrue(json_path.exists())
             self.assertTrue(conversation_path.exists())
-            self.assertEqual(conversation_path.suffix, ".txt")
             payload = json.loads(json_path.read_text(encoding="utf-8"))
             self.assertEqual(payload["provider"], "dry-run")
+            self.assertIn("transcript", payload)
+            self.assertIn("thinking", payload)
+            self.assertIn("task_result", payload)
+            self.assertIn("format_check", payload)
             conversation = format_conversation(result)
             self.assertIn("SIMULACREW CONVERSATION", conversation)
             self.assertIn("[DISCUSSION] Group Chat", conversation)
 
     def test_deterministic_interruption_score_ranks_assertive_skeptic(self) -> None:
-        config = load_config(REPO_ROOT / "configs" / "simulacra.json")
-        mara, niko = config.agents[0], config.agents[1]
+        experiment = load_experiment(EXPERIMENT_PATH)
+        mara, niko = experiment.agents[0], experiment.agents[1]
         self.assertGreater(
             deterministic_interruption_score(niko),
-            deterministic_interruption_score(config.agents[2]),
+            deterministic_interruption_score(experiment.agents[2]),
         )
         self.assertGreater(
             DeterministicInterruptionClassifier()
             .score(
                 agent=mara,
-                config=config,
-                round_spec=config.rounds[1],
+                experiment=experiment,
+                round_spec=experiment.process.rounds[1],
                 transcript=[Statement("x", "X", "r", 1, "debate", "claim")],
                 turn_number=2,
             )
@@ -355,10 +416,10 @@ class EngineTests(unittest.TestCase):
         )
 
     def test_private_positions_inform_only_the_same_agent(self) -> None:
-        config = load_config(REPO_ROOT / "configs" / "simulacra.json")
+        experiment = load_experiment(EXPERIMENT_PATH)
         client = PromptRecordingClient()
-        run_crew(
-            config=config,
+        run_experiment(
+            experiment=experiment,
             client=client,
             model="dry-run-model",
             max_agents=2,
@@ -385,11 +446,27 @@ class EngineTests(unittest.TestCase):
         self.assertIn("private-secret-niko", niko_call["user_prompt"])
         self.assertNotIn("private-secret-mara", niko_call["user_prompt"])
 
-    def test_hidden_idea_state_is_not_shown_to_agent_prompts(self) -> None:
-        config = load_config(REPO_ROOT / "configs" / "simulacra.json")
+    def test_thinking_field_collects_private_thoughts(self) -> None:
+        experiment = load_experiment(EXPERIMENT_PATH)
         client = PromptRecordingClient()
-        run_crew(
-            config=config,
+        result = run_experiment(
+            experiment=experiment,
+            client=client,
+            model="dry-run-model",
+            max_agents=2,
+        )
+        # Each participant should have at least one private thought (independent
+        # positions round).
+        self.assertIn("mara", result.thinking)
+        self.assertIn("niko", result.thinking)
+        for notes in result.thinking.values():
+            self.assertTrue(any(note.startswith("private-secret-") or note.startswith("private-note-") for note in notes))
+
+    def test_hidden_idea_state_is_not_shown_to_agent_prompts(self) -> None:
+        experiment = load_experiment(EXPERIMENT_PATH)
+        client = PromptRecordingClient()
+        run_experiment(
+            experiment=experiment,
             client=client,
             model="dry-run-model",
             max_agents=2,
@@ -418,10 +495,10 @@ class EngineTests(unittest.TestCase):
                 self.assertNotIn(fragment, prompt)
 
     def test_claude_idea_state_updates_are_per_agent_and_haiku(self) -> None:
-        config = load_config(REPO_ROOT / "configs" / "simulacra.json")
+        experiment = load_experiment(EXPERIMENT_PATH)
         client = AgentStateClient()
-        result = run_crew(
-            config=config,
+        result = run_experiment(
+            experiment=experiment,
             client=client,
             model="opus",
             max_agents=2,

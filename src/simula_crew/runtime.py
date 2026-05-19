@@ -3,30 +3,30 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 
-from simula_crew.schema import ConfigError, CrewConfig
+from simula_crew.schema import ConfigError, ExperimentConfig
 
 
 def apply_runtime_inputs(
-    config: CrewConfig,
+    experiment: ExperimentConfig,
     *,
     prompt: str | None = None,
     prompt_file: str | Path | None = None,
     variables: dict[str, str] | None = None,
-) -> CrewConfig:
-    topic_prompt = _resolve_prompt(prompt=prompt, prompt_file=prompt_file)
-    topic_variables = dict(config.topic.variables)
+) -> ExperimentConfig:
+    task_prompt = _resolve_prompt(prompt=prompt, prompt_file=prompt_file)
+    task_variables = dict(experiment.task.variables)
 
-    if topic_prompt:
-        topic_variables["challenge_prompt"] = topic_prompt
-        topic = replace(config.topic, prompt=topic_prompt, variables=topic_variables)
+    if task_prompt:
+        task_variables["challenge_prompt"] = task_prompt
+        task = replace(experiment.task, prompt=task_prompt, variables=task_variables)
     else:
-        topic = config.topic
+        task = experiment.task
 
     if variables:
-        topic_variables.update(variables)
-        topic = replace(topic, variables=topic_variables)
+        task_variables.update(variables)
+        task = replace(task, variables=task_variables)
 
-    return replace(config, topic=topic)
+    return replace(experiment, task=task)
 
 
 def parse_variable_assignments(assignments: list[str] | None) -> dict[str, str]:

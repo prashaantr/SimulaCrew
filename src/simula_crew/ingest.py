@@ -126,84 +126,108 @@ def agents_from_survey_rows(
     return agents
 
 
-def build_survey_crew_config(
+def build_survey_experiment_bundle(
     agents: list[AgentPersona],
     *,
-    name: str = "survey_team",
-    topic_prompt: str = "Deliberate as a team and produce the best final artifact for the task.",
+    name: str = "survey-team",
+    task_prompt: str = "Deliberate as a team and produce the best final artifact for the task.",
     description: str = "Survey-derived open-ended SimulaCrew team.",
 ) -> dict[str, Any]:
-    return {
+    """Build a four-file experiment bundle from survey-derived agents.
+
+    Returns a dict with keys 'experiment', 'task', 'process', 'agents'. The
+    'experiment' value references the others by relative filename, suitable for
+    writing out as experiment.yaml + task.json + process.json + agents.json.
+    """
+    task = {
+        "title": "Survey-Derived Team Simulation",
+        "prompt": task_prompt,
+        "target_user": "the simulation runner",
+        "success_criteria": "produce a concrete final artifact that reflects the team's likely deliberation",
+        "output_format": {
+            "type": "markdown",
+            "description": (
+                "Final synthesis must describe the team's predicted final deliverable. "
+                "Include the main artifact, rationale, rejected alternatives, unresolved "
+                "dissent, risks, and immediate next steps."
+            ),
+            "required_sections": [
+                "artifact",
+                "rationale",
+                "risks",
+                "next steps",
+            ],
+        },
+        "variables": {
+            "time_budget": "20 minutes",
+            "discussion_time_limit_minutes": 20,
+            "decision_pressure": "The team is trying to converge on a useful output today.",
+            "shared_goal": "Converge on one concrete final deliverable for the task.",
+            "default_goal_alignment_start": 0.42,
+            "goal_alignment_threshold": 0.86,
+            "goal_alignment_min_turns": 8,
+            "goal_alignment_evaluator": "deterministic",
+            "goal_alignment_step_self": 0.055,
+            "goal_alignment_step_listener": 0.025,
+            "goal_alignment_interrupt_factor": 0.65,
+            "private_thinking_workers": min(max(len(agents), 1), 4),
+        },
+    }
+    process = {
+        "shared_instructions": (
+            "You are part of a realistic working group. Your persona comes from "
+            "survey-derived evidence, including demographic context, professional "
+            "background, stated interests, collaboration preferences, and optional "
+            "document evidence. Use those details as grounded context; do not make "
+            "unsupported stereotyped inferences. Speak naturally and keep turns concise."
+        ),
+        "character_prompt_template": (
+            "survey-derived character prompt for {agent_name}:\n\n"
+            "Base behavior:\n{agent_base_prompt}\n\n"
+            "Backstory and demographic/professional context:\n{agent_backstory}\n\n"
+            "Past experience / document evidence:\n{agent_history}\n\n"
+            "Skills:\n{agent_skills}\n\n"
+            "Interests:\n{agent_interests}\n\n"
+            "Knowledge they can draw from:\n{agent_knowledge}\n\n"
+            "Speaking style:\n{agent_speaking_style}\n\n"
+            "Personality questionnaire fields:\n{agent_personality}\n\n"
+            "Goals:\n{agent_goals}\n\n"
+            "Constraints:\n{agent_constraints}\n\n"
+            "Use the survey and document evidence to decide what this person notices, "
+            "where they are credible, what they may push for, when they speak, and how "
+            "they collaborate. Do not recite the survey mechanically."
+        ),
+        "interaction_rules": [
+            "Start with independent reasoning before seeing peer arguments.",
+            "During group chat, make one move per turn: ask, answer, challenge, clarify, concede, or propose.",
+            "Draw naturally on professional background, skills, interests, values, and document evidence.",
+            "Avoid false consensus. If disagreement remains, preserve it.",
+        ],
+        "interruption_rules": [
+            "Interrupt when a hidden assumption would change the decision.",
+            "Interrupt when the group is converging too early.",
+            "Interrupt when a proposal is vague enough that it cannot be tested.",
+            "Do not interrupt merely to restate your preference.",
+        ],
+        "rounds": _default_rounds(),
+    }
+    agents_payload = {"agents": [_agent_to_config(agent) for agent in agents]}
+    experiment = {
         "name": name,
         "description": description,
         "metadata": {
             "source": "survey-ingestion",
             "agent_count": len(agents),
         },
-        "topic": {
-            "title": "Survey-Derived Team Simulation",
-            "prompt": topic_prompt,
-            "target_user": "the simulation runner",
-            "success_criteria": "produce a concrete final artifact that reflects the team's likely deliberation",
-            "variables": {
-                "time_budget": "20 minutes",
-                "discussion_time_limit_minutes": 20,
-                "decision_pressure": "The team is trying to converge on a useful output today.",
-                "shared_goal": "Converge on one concrete final deliverable for the task.",
-                "default_goal_alignment_start": 0.42,
-                "goal_alignment_threshold": 0.86,
-                "goal_alignment_min_turns": 8,
-                "goal_alignment_evaluator": "deterministic",
-                "goal_alignment_step_self": 0.055,
-                "goal_alignment_step_listener": 0.025,
-                "goal_alignment_interrupt_factor": 0.65,
-                "private_thinking_workers": min(max(len(agents), 1), 4),
-            },
-        },
-        "harness": {
-            "shared_instructions": (
-                "You are part of a realistic working group. Your persona comes from "
-                "survey-derived evidence, including demographic context, professional "
-                "background, stated interests, collaboration preferences, and optional "
-                "document evidence. Use those details as grounded context; do not make "
-                "unsupported stereotyped inferences. Speak naturally and keep turns concise."
-            ),
-            "character_prompt_template": (
-                "survey-derived character prompt for {agent_name}:\n\n"
-                "Base behavior:\n{agent_base_prompt}\n\n"
-                "Backstory and demographic/professional context:\n{agent_backstory}\n\n"
-                "Past experience / document evidence:\n{agent_history}\n\n"
-                "Skills:\n{agent_skills}\n\n"
-                "Interests:\n{agent_interests}\n\n"
-                "Knowledge they can draw from:\n{agent_knowledge}\n\n"
-                "Speaking style:\n{agent_speaking_style}\n\n"
-                "Personality questionnaire fields:\n{agent_personality}\n\n"
-                "Goals:\n{agent_goals}\n\n"
-                "Constraints:\n{agent_constraints}\n\n"
-                "Use the survey and document evidence to decide what this person notices, "
-                "where they are credible, what they may push for, when they speak, and how "
-                "they collaborate. Do not recite the survey mechanically."
-            ),
-            "interaction_rules": [
-                "Start with independent reasoning before seeing peer arguments.",
-                "During group chat, make one move per turn: ask, answer, challenge, clarify, concede, or propose.",
-                "Draw naturally on professional background, skills, interests, values, and document evidence.",
-                "Avoid false consensus. If disagreement remains, preserve it.",
-            ],
-            "interruption_rules": [
-                "Interrupt when a hidden assumption would change the decision.",
-                "Interrupt when the group is converging too early.",
-                "Interrupt when a proposal is vague enough that it cannot be tested.",
-                "Do not interrupt merely to restate your preference.",
-            ],
-            "output_contract": (
-                "Final synthesis must describe the team's predicted final deliverable. "
-                "Include the main artifact, rationale, rejected alternatives, unresolved "
-                "dissent, risks, and immediate next steps."
-            ),
-        },
-        "agents": [_agent_to_config(agent) for agent in agents],
-        "rounds": _default_rounds(),
+        "task": "task.json",
+        "process": "process.json",
+        "agents": "agents.json",
+    }
+    return {
+        "experiment": experiment,
+        "task": task,
+        "process": process,
+        "agents": agents_payload,
     }
 
 
