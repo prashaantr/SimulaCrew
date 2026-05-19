@@ -171,7 +171,7 @@ def _run_private_round(
                 event_type="private",
                 extra={
                     "turns_remaining": len(participants) - index - 1,
-                    **goal_tracker.prompt_context(agent.id),
+                    **goal_tracker.visible_prompt_context(),
                 },
                 event_callback=event_callback,
                 private_memory=private_memory,
@@ -297,7 +297,7 @@ def _run_group_round(
             extra={
                 "current_speaker": speaker.name,
                 "turns_remaining": max_turns - turn_index - 1,
-                **goal_tracker.prompt_context(speaker.id),
+                **goal_tracker.visible_prompt_context(),
                 "interruption_score": (
                     statement_decision.score
                     if statement_decision
@@ -612,7 +612,7 @@ def _call_private_thought(
             "current_speaker": agent.name,
             "turns_remaining": (round_spec.max_turns or 0) - turn_number,
             "private_memory": _format_private_memory(private_memory.get(agent.id, [])),
-            **((goal_tracker or GoalTracker.empty()).prompt_context(agent.id)),
+            **((goal_tracker or GoalTracker.empty()).visible_prompt_context()),
         },
     )
     system_prompt = build_agent_system_prompt(config, agent)
@@ -704,7 +704,7 @@ def _call_recorder(
             "current_speaker": round_spec.speaker_name,
             "turns_remaining": 0,
             "private_memory": _format_all_private_memory(memory),
-            **goal.prompt_context(),
+            **goal.visible_prompt_context(),
         },
     )
     system_prompt = "\n\n".join(
@@ -922,6 +922,13 @@ class GoalTracker:
             "current_idea": self.current_idea,
             "agent_idea_view": self.agent_idea_views.get(agent_id, self.current_idea),
             "agent_idea_views_summary": self.idea_views_summary(),
+            "discussion_time_limit": _format_seconds(self.time_limit_seconds),
+        }
+
+    def visible_prompt_context(self) -> dict[str, str]:
+        """Context safe to show to speaking agents and the recorder."""
+        return {
+            "alignment_goal": self.goal,
             "discussion_time_limit": _format_seconds(self.time_limit_seconds),
         }
 

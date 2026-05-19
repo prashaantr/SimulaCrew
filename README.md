@@ -580,14 +580,28 @@ Internal interruption scores and classifier notes are hidden by default because 
 simulacrew run configs/simulacra.json --show-interruption-notes
 ```
 
-The normal CLI shows buy-in and current idea state after public group-chat turns:
+The normal CLI shows buy-in and current idea state after public group-chat turns. This state is for the human operator; it is not fed back into the speaking agents.
 
 ```text
-◇ buy-in  june 43%  mara 56%  niko 37%  sol 45%
-◇ idea    voice-first job-skills matcher for displaced workers
+  ┌─ room state ───────────────────────────────────────────────────────────────
+  │ buy-in
+  │   June      43%  █████░░░░░░░
+  │   Mara      56%  ███████░░░░░
+  │   Niko      37%  ████░░░░░░░░
+  │   Sol       45%  █████░░░░░░░
+  │
+  │ shared idea
+  │   voice-first job-skills matcher for displaced workers
+  │
+  │ agent idea views
+  │   Mara
+  │     voice-first job-skills matcher for informal workers
+  │   Niko
+  │     skills matcher, but only if job recommendations are grounded
+  └────────────────────────────────────────────────────────────────────────────
 ```
 
-The CLI also prints each agent's internal view of what the idea is. This helps catch cases where agents appear to agree but are actually imagining different products.
+The CLI also prints each agent's evaluated view of what the idea is. This helps catch cases where agents appear to agree but are actually imagining different products.
 
 ## How Agents Decide To Stay Quiet
 
@@ -669,6 +683,8 @@ June concept: simple demo where a worker speaks history and sees next steps
 
 That is useful: the CLI can show when people sound aligned but are actually carrying different versions of the product in their heads.
 
+Important: this is observer state, not agent context. Speaking agents do not see `current_idea`, `agent_idea_view`, `agent_idea_views_summary`, `goal_alignment`, `goal_alignment_summary`, or the buy-in percentages. Those values are computed after public turns for CLI display, JSON metadata, and stopping logic.
+
 The CLI line:
 
 ```text
@@ -688,13 +704,13 @@ The percentage is not a truth score and not a quality score. It means:
 0-25%    blocking or not bought in
 26-50%   interested but still contesting assumptions
 51-75%   leaning in, but still wants changes or evidence
-76-85%   mostly ready to proceed
-86-100%  ready to treat this as the PRD target
+76-89%   mostly ready to proceed
+90-100%  ready to treat this as the PRD target
 ```
 
-The default convergence threshold is `86%`, so the group only stops once every active agent is above that threshold after the minimum number of public turns.
+The default convergence threshold is `90%`, so the group only stops once every active agent is at or above that threshold after the minimum number of public turns.
 
-With `--show-interruption-notes`, the CLI can also show each agent's view:
+The normal room-state block includes each evaluated agent view:
 
 ```text
 ◇ agent idea views
@@ -711,7 +727,7 @@ all agents buy-in >= goal_alignment_threshold
 AND public turns >= goal_alignment_min_turns
 ```
 
-If the 20-minute discussion cap hits first, the recorder writes the PRD from the best available shared idea and preserves unresolved disagreement.
+If the 20-minute discussion cap hits first, the recorder writes the PRD from the transcript and private notes, then preserves unresolved disagreement.
 
 ### Live Claude Runs
 
@@ -737,7 +753,7 @@ Each evaluator returns compact JSON:
 }
 ```
 
-Those per-agent values become the next turn's private context and the CLI buy-in display. The shared `idea` line is derived from the agent idea views and buy-in scores. The full per-agent views are printed underneath it.
+Those per-agent values update the CLI buy-in display, JSON metadata, and convergence check. They do not become the next turn's agent prompt. The shared `idea` line is derived from the agent idea views and buy-in scores. The full per-agent views are printed underneath it for the human operator.
 
 The live path works like this after every public group-chat message:
 
@@ -806,7 +822,7 @@ This is configured in `configs/simulacra.json` under `topic.variables`:
 {
   "shared_goal": "Converge on one concrete hackathon project idea and then produce a useful PRD for building it.",
   "discussion_time_limit_minutes": 20,
-  "goal_alignment_threshold": 0.86,
+  "goal_alignment_threshold": 0.90,
   "goal_alignment_min_turns": 8,
   "goal_alignment_evaluator": "llm",
   "default_goal_alignment_start": 0.42,
@@ -839,7 +855,7 @@ Per-agent starting alignment goes in `agents[].personality.goal_alignment_start`
 }
 ```
 
-The alignment state is written into the JSON run metadata for debugging. It is not printed in the normal CLI transcript unless you pass `--show-interruption-notes`.
+The alignment state is printed in the live CLI room-state block and written into JSON metadata. It is not shown to the agents. `--show-interruption-notes` adds classifier rationales and interruption scores for debugging.
 
 ## Where Personalities Go
 
@@ -955,8 +971,9 @@ The final round is a recorder round. It receives:
 
 - the full public transcript,
 - the hidden private notes that agents kept when they stayed quiet,
-- the final convergence state,
 - the configured `harness.output_contract`.
+
+It does not receive the hidden shared idea, per-agent idea views, or buy-in percentages. The recorder has to write from the discussion record, which keeps the hidden evaluator from becoming an extra invisible participant.
 
 The default output contract asks for:
 

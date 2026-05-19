@@ -239,6 +239,38 @@ class EngineTests(unittest.TestCase):
         self.assertIn("private-secret-niko", niko_call["user_prompt"])
         self.assertNotIn("private-secret-mara", niko_call["user_prompt"])
 
+    def test_hidden_idea_state_is_not_shown_to_agent_prompts(self) -> None:
+        config = load_config(REPO_ROOT / "configs" / "simulacra.json")
+        client = PromptRecordingClient()
+        run_crew(
+            config=config,
+            client=client,
+            model="dry-run-model",
+            max_agents=2,
+        )
+        agent_visible_calls = [
+            call
+            for call in client.calls
+            if call["metadata"].get("event_type")
+            in {"private", "debate", "interrupt", "thought", "synthesis"}
+        ]
+        self.assertTrue(agent_visible_calls)
+        forbidden_fragments = [
+            "Current idea the room may be converging on",
+            "Your private understanding of that idea",
+            "Your private current buy-in",
+            "Private group buy-in snapshot",
+            "Final shared idea",
+            "Final buy-in state",
+            "Each agent's idea view",
+            "No idea has been named yet.",
+            "avg=",
+        ]
+        for call in agent_visible_calls:
+            prompt = call["user_prompt"]
+            for fragment in forbidden_fragments:
+                self.assertNotIn(fragment, prompt)
+
     def test_claude_idea_state_updates_are_per_agent_and_haiku(self) -> None:
         config = load_config(REPO_ROOT / "configs" / "simulacra.json")
         client = AgentStateClient()
