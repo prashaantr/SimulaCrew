@@ -265,7 +265,7 @@
       "speaker_id": "recorder",
       "speaker_name": "Recorder",
       "speaker_prompt": "You are a neutral recorder. Do not invent consensus. Preserve dissent and identify the best next step.",
-      "prompt": "Topic: {topic_prompt}\nShared objective: {alignment_goal}\nFinal alignment state: {goal_alignment_summary}\nPrivate notes that informed but did not appear in chat:\n{private_memory}\n\nFull transcript:\n{transcript}\n\n{output_contract}\n\nWrite the PRD for the idea the group converged on. Do not include the raw transcript."
+      "prompt": "Topic: {topic_prompt}\nShared objective: {alignment_goal}\nFinal shared idea: {current_idea}\nFinal buy-in state: {goal_alignment_summary}\nEach agent's idea view:\n{agent_idea_views_summary}\nPrivate notes that informed but did not appear in chat:\n{private_memory}\n\nFull transcript:\n{transcript}\n\n{output_contract}\n\nWrite the PRD for the idea the group converged on. If agent idea views disagree, resolve the clearest shared version and preserve the disagreement in risks or open questions. Do not include the raw transcript."
     }
   ]
 }

@@ -562,6 +562,116 @@ The normal CLI shows buy-in and current idea state after public group-chat turns
 
 With `--show-interruption-notes`, the CLI also prints each agent's internal view of what the idea is. This helps catch cases where agents appear to agree but are actually imagining different products.
 
+## How The Idea And Percentages Work
+
+SimulaCrew does not pick the idea by taking the last sentence someone said. The intended model is closer to a real group:
+
+```text
++------------------+       +------------------+       +------------------+
+| agent idea view  |       | buy-in score     |       | public transcript|
++------------------+       +------------------+       +------------------+
+| Mara's concept   |       | Mara: 0.56       |       | what was said    |
+| Niko's concept   | ----> | Niko: 0.37       | ----> | questions        |
+| Sol's concept    |       | Sol: 0.45        |       | objections       |
+| June's concept   |       | June: 0.43       |       | concessions      |
++------------------+       +------------------+       +------------------+
+          |                         |                         |
+          +-------------------------+-------------------------+
+                                    v
+                         +----------------------+
+                         | convergence evaluator|
+                         | updates room state   |
+                         +----------+-----------+
+                                    |
+                                    v
+                         +----------------------+
+                         | shared current idea  |
+                         | PRD when aligned     |
+                         +----------------------+
+```
+
+Each agent has two pieces of internal state:
+
+- `agent idea view`: what that agent currently thinks the proposal is.
+- `buy-in score`: how bought in that agent is to moving forward with the shared goal and emerging idea.
+
+The CLI line:
+
+```text
+◇ buy-in  mara 56%  niko 37%  sol 45%  june 43%
+◇ idea    voice-first job-skills matcher for displaced workers
+```
+
+means:
+
+- Mara is 56% bought in to the current direction.
+- Niko is 37% bought in, so he is likely to keep contesting or asking for proof.
+- The `idea` line is the evaluator's current best read of the shared proposal in the room.
+
+With `--show-interruption-notes`, the CLI can also show each agent's view:
+
+```text
+◇ agent idea views
+  mara: voice-first job-skills matcher for informal workers
+  niko: skills matcher, but only valid if job data is grounded
+  sol: worker mobility tool that translates experience into next roles
+  june: simple demo where a worker speaks history and sees next steps
+```
+
+The final idea is decided when the group reaches convergence:
+
+```text
+all agents buy-in >= goal_alignment_threshold
+AND public turns >= goal_alignment_min_turns
+```
+
+If the 20-minute discussion cap hits first, the recorder writes the PRD from the best available shared idea and preserves unresolved disagreement.
+
+### Live Claude Runs
+
+When running with Claude and `goal_alignment_evaluator: "llm"`, the evaluator receives:
+
+- the shared goal,
+- all active personas,
+- current buy-in scores,
+- the latest public statement,
+- the public transcript.
+
+It returns compact JSON:
+
+```json
+{
+  "by_agent": {
+    "mara": 0.56,
+    "niko": 0.37,
+    "sol": 0.45,
+    "june": 0.43
+  },
+  "current_idea": "voice-first job-skills matcher for displaced workers",
+  "agent_views": {
+    "mara": "fast demo for displaced workers",
+    "niko": "skills matcher needing grounded job data",
+    "sol": "mobility tool connecting experience to next roles",
+    "june": "simple worker-facing demo"
+  },
+  "aligned": false,
+  "rationale": "The group has a candidate idea, but Niko still needs evidence quality resolved."
+}
+```
+
+Those values become the next turn's private context and the CLI buy-in display.
+
+### Dry-Run Mode
+
+Dry-run mode does not call an LLM evaluator. It uses deterministic fallback values so tests and demos can run without an API key:
+
+- the speaker's buy-in increases by `goal_alignment_step_self`,
+- listeners increase by `goal_alignment_step_listener`,
+- interruptions are damped by `goal_alignment_interrupt_factor`,
+- the visible `idea` line is a simple placeholder derived from the latest public statement.
+
+Dry-run percentages are useful for testing the mechanics. For realistic idea tracking, use Claude with the LLM convergence evaluator.
+
 ## Convergence And The 20-Minute Cap
 
 The default task is:
