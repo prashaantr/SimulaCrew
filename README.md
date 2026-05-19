@@ -99,6 +99,32 @@ Run a no-API dry run:
 simulacrew run configs/simulacra.json
 ```
 
+This is called `dry-run` because it does not call Claude or OpenAI. It uses deterministic placeholder responses so you can test install, CLI rendering, file output, state updates, and stopping logic without spending API calls.
+
+Run a real Claude simulation:
+
+```bash
+simulacrew run configs/simulacra.json \
+  --provider claude \
+  --model sonnet \
+  --interruption-classifier llm \
+  --prompt "what project should we do for the Gates Foundation build-a-thon hackathon future of work?"
+```
+
+That command is not dry-run:
+
+```text
++-------------------------------+------------------------------------------------+
+| setting                       | what happens                                   |
++-------------------------------+------------------------------------------------+
+| --provider claude             | agent turns call Claude through the SDK        |
+| --model sonnet                | spoken agent turns use the Sonnet alias        |
+| --interruption-classifier llm | cut-in decisions use Claude                    |
+| idea_state_model: haiku       | buy-in/idea state updates use fast Haiku       |
+| no --provider                 | defaults to dry-run                            |
++-------------------------------+------------------------------------------------+
+```
+
 By default the CLI prints a live, [jury-sim-style conversation](https://github.com/prashaantr/jurysim): each agent briefly thinks, then the group chats normally, with occasional natural cut-ins. The recorder writes the PRD only after discussion ends. This is not token-by-token streaming, but it prints before and after each agent call so long Claude runs do not look frozen.
 
 To disable live output and print only the final summary:
@@ -620,6 +646,29 @@ Each agent has two pieces of internal state:
 - `agent idea view`: what that agent currently thinks the proposal is.
 - `buy-in score`: how bought in that agent is to moving forward with the shared goal and emerging idea.
 
+Think of the model as three layers:
+
+```text
++----------------------+---------------------------------------------------------+
+| layer                | meaning                                                 |
++----------------------+---------------------------------------------------------+
+| agent idea concept   | one agent's private understanding of the proposal       |
+| shared current idea  | the room-level best read derived from agent concepts    |
+| final PRD idea       | the idea written up after convergence or time limit     |
++----------------------+---------------------------------------------------------+
+```
+
+The concepts can differ. For example:
+
+```text
+Mara concept: voice-first job-skills matcher for informal workers
+Niko concept: skills matcher, but only if job recommendations are grounded
+Sol concept: mobility tool translating work history into reachable next roles
+June concept: simple demo where a worker speaks history and sees next steps
+```
+
+That is useful: the CLI can show when people sound aligned but are actually carrying different versions of the product in their heads.
+
 The CLI line:
 
 ```text
@@ -632,6 +681,18 @@ means:
 - Mara is 56% bought in to the current direction.
 - Niko is 37% bought in, so he is likely to keep contesting or asking for proof.
 - The `idea` line is the evaluator's current best read of the shared proposal in the room.
+
+The percentage is not a truth score and not a quality score. It means:
+
+```text
+0-25%    blocking or not bought in
+26-50%   interested but still contesting assumptions
+51-75%   leaning in, but still wants changes or evidence
+76-85%   mostly ready to proceed
+86-100%  ready to treat this as the PRD target
+```
+
+The default convergence threshold is `86%`, so the group only stops once every active agent is above that threshold after the minimum number of public turns.
 
 With `--show-interruption-notes`, the CLI can also show each agent's view:
 
@@ -678,6 +739,33 @@ Each evaluator returns compact JSON:
 
 Those per-agent values become the next turn's private context and the CLI buy-in display. The shared `idea` line is derived from the agent idea views and buy-in scores. The full per-agent views are printed underneath it.
 
+The live path works like this after every public group-chat message:
+
+```text
++--------------------+
+| public turn lands  |
++---------+----------+
+          |
+          v
++--------------------+   +--------------------+   +--------------------+
+| Mara state update  |   | Niko state update  |   | Sol/June updates   |
+| model: haiku       |   | model: haiku       |   | model: haiku       |
++---------+----------+   +---------+----------+   +---------+----------+
+          |                        |                        |
+          +------------------------+------------------------+
+                                   v
+                    +------------------------------+
+                    | update buy-in + idea views   |
+                    +---------------+--------------+
+                                    |
+                                    v
+                    +------------------------------+
+                    | print colored CLI state      |
+                    +------------------------------+
+```
+
+Each update is independent and can run in parallel because one agent's private buy-in calculation does not need another agent's private buy-in calculation.
+
 Configure this in `configs/simulacra.json`:
 
 ```json
@@ -701,6 +789,8 @@ Dry-run mode does not call an LLM evaluator. It uses deterministic fallback valu
 - the visible shared `idea` is derived from the highest buy-in agent view.
 
 Dry-run percentages are useful for testing the mechanics. For realistic idea tracking, use Claude with the LLM convergence evaluator.
+
+Dry-run is deliberately mechanical. It proves the CLI, state plumbing, stopping logic, and saved artifacts work without spending API calls. It is not meant to be a realistic judge of whether an idea is good.
 
 ## Convergence And The 20-Minute Cap
 
