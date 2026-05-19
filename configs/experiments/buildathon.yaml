@@ -5,6 +5,28 @@ description: |
   Deliverable: The team’s goal is to scope a project that is executable within a single work day (roughly 5 hours), and that can be presented in a demo by the end of the three-day conference. The demo should be interesting and relevant to an interdisciplinary audience on AI and the future of work.
 
   The format of the deliverable should be a markdown-formatted text string describing the project and its intended scope and details, as well as a breakdown of the tasks required to execute the project and an allocation of who will complete each task. The document should be clear, concise, and represent a realistic, executable plan for the project given the timeline.
+
+  Project Ideas (initial ideas generated ahead of the Build-a-Thon):
+  Andi/Prashaant: A tool to visualise the “state” (what’s done what’s missing) of an applied Econ research project
+  (Morgan) Translating skills/jobs/experience across taxonomies (cut-out proprietary black boxes)
+  (Morgan) connecting higher education with graduates' labor market outcomes using lots of syllabi + LinkedIn profiles
+  (Daniel): train LLMs from scratch on job postings data (supplied by Revelio)... goal is to post on huggingface/github
+  From Claudine: Dan, what’s the use case for this? Is it for researchers or job-seekers?
+  Matt Z: Construct the first open occupation-level (maybe even task-level?) dataset/model of demand elasticity… something linking cost impacts / demand to help estimate the least understood part of the job impact puzzle.
+  (Emily) Do agents that complete tasks in isolation struggle to piece together the whole? Select a series of realistic work tasks (e.g., from job data or O*NET) → simulate examples in which agents with different characteristics complete different steps → evaluate final output quality
+  The first step could just be a harness that runs the simulation (sample a task → deploy a bunch of agents that try to divide and conquer)
+  Another step could just focus on the question of how/whether agents subdivide and allocate the steps. Is it consistent? Is it optimal?
+  (Emily) Front-end visualization tool for analyzing a conversation (can focus on human-AI conversations and training people to prompt better, detect specific AI communication patterns, flag concerning conversation patterns, etc.)
+  Variation for just prompting: you write a prompt that you’d like to use and the tool annotates it with suggestions for how to make it sharper
+  (Emily) Reverse task generator: existing tools take a task and identify characteristics/features from it. What about starting with skills or characteristics and being able to generate tasks that involve those characteristics? (This “reverse” question might be important for things like education, where students might learn some basic skills and want to know what kinds of tasks/jobs these are relevant for.)
+  Matt B: What if we did something like this, but for skills (basically model supply-side dynamics on the skill complement required for a healthy job/org/econ): https://x.com/EpochAIResearch/status/2052509552776761580?s=20 
+  Matt Z: Build then backtest a multi-factor displacement model (including current known data on demand elasticity, adaptability, firm adoption, exposure, etc.) on last couple years of labor data.
+  Matt Z: The New Work Tracker: So many datasets measure destruction, let’s build one for creation tracking novel task language emerging in job postings, first-appearance dates by occupation, etc. 
+  Steve Lee: Tear the Paper Ceiling rewriter w/ bias measurement - employer side job description is rewritten focused on skills and experience over degree with rationale for each change. Then the old and new ads are run through a synthetic resume generation pool to show the shift in pass rates.
+  Alex S: Modeling augmentation-vs-automation scenarios in archetypal firm structures / industries (i.e., firms that have X, Y, or Z combinations of roles / org structures), accounting for different levels of AI adoption maturity 
+  Alex S: Costs to perform the same bundle of tasks performed by human, AI/agentic, or hybrid systems under different conditions of compute/labor pricing 
+  Matt Z: Shameless plug: Build anything to improve / automate / add to:  jobsdata.ai 
+  Abby: What are people’s anxieties and perceptions of AI as it pertains to its impact on their own career? How does that influence their behavior when anticipating and navigating transitions?
 task: ../tasks/buildathon.json
 process: ../processes/buildathon.json
 agents: ../agents/agents_buildathon.json
