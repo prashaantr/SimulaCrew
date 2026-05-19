@@ -143,14 +143,16 @@ def build_survey_experiment_bundle(
         "target_user": "the simulation runner",
         "success_criteria": (
             "predict the concrete build-a-thon project this team would likely choose "
-            "after open-ended deliberation"
+            "after open-ended deliberation, weighting the members' personal and "
+            "professional backgrounds more heavily than generic task appeal"
         ),
         "output_format": {
             "type": "markdown",
             "description": (
                 "Final synthesis must describe the team's predicted build-a-thon project. "
                 "Include the main artifact, rationale, rejected alternatives, unresolved "
-                "dissent, risks, and immediate next steps."
+                "dissent, risks, immediate next steps, and why this specific team's "
+                "backgrounds, skills, interests, and values make the project plausible."
             ),
             "required_sections": [
                 "artifact",
@@ -162,8 +164,14 @@ def build_survey_experiment_bundle(
         "variables": {
             "time_budget": "20 minutes",
             "discussion_time_limit_minutes": 20,
-            "decision_pressure": "The team is trying to converge on a project they could build today.",
-            "shared_goal": "Converge on one concrete build-a-thon project.",
+            "decision_pressure": (
+                "The team is trying to converge on a project they could build today, "
+                "but personal fit should matter more than generic hackathon strategy."
+            ),
+            "shared_goal": (
+                "Converge on one concrete build-a-thon project that this exact team "
+                "would plausibly choose from its members' backgrounds."
+            ),
             "default_goal_alignment_start": 0.42,
             "goal_alignment_threshold": 0.86,
             "goal_alignment_min_turns": 8,
@@ -179,8 +187,11 @@ def build_survey_experiment_bundle(
             "You are part of a realistic working group. Your persona comes from "
             "survey-derived evidence, including demographic context, professional "
             "background, stated interests, collaboration preferences, and optional "
-            "document evidence. Use those details as grounded context; do not make "
-            "unsupported stereotyped inferences. Speak naturally and keep turns concise."
+            "document evidence. Use those details as the primary decision lens; the "
+            "task prompt is the shared arena, not the agent's whole identity. When "
+            "generic task strategy conflicts with personal background, let the "
+            "survey-derived background dominate. Do not make unsupported stereotyped "
+            "inferences. Speak naturally and keep turns concise."
         ),
         "character_prompt_template": (
             "survey-derived character prompt for {agent_name}:\n\n"
@@ -196,12 +207,15 @@ def build_survey_experiment_bundle(
             "Constraints:\n{agent_constraints}\n\n"
             "Use the survey and document evidence to decide what this person notices, "
             "where they are credible, what they may push for, when they speak, and how "
-            "they collaborate. Do not recite the survey mechanically."
+            "they collaborate. Weight this person's background, values, skills, and "
+            "stated interests more heavily than the task description itself. Do not "
+            "recite the survey mechanically."
         ),
         "interaction_rules": [
             "Start with independent reasoning before seeing peer arguments.",
             "During group chat, make one move per turn: ask, answer, challenge, clarify, concede, or propose.",
             "Draw naturally on professional background, skills, interests, values, and document evidence.",
+            "Prefer ideas that feel personally plausible for these exact members over ideas that merely fit the topic.",
             "Avoid false consensus. If disagreement remains, preserve it.",
         ],
         "interruption_rules": [
@@ -442,8 +456,10 @@ def _default_rounds() -> list[dict[str, Any]]:
                 "Topic: {topic_prompt}\n\nTarget user: {target_user}\n"
                 "Success criteria: {success_criteria}\nTime budget: {time_budget}\n\n"
                 "As {agent_name}, quietly read the task and give your initial take as "
-                "two or three plain spoken sentences. Draw on your survey-derived "
-                "background and document evidence. No headings or bullets."
+                "two or three plain spoken sentences. Treat your survey-derived "
+                "background, skills, values, interests, and document evidence as the "
+                "primary source of what you notice and want. The task is only the "
+                "shared prompt. No headings or bullets."
             ),
         },
         {
@@ -463,9 +479,12 @@ def _default_rounds() -> list[dict[str, Any]]:
                 "Private notes from times you stayed quiet:\n{private_memory}\n\n"
                 "Transcript:\n{transcript}\n\n"
                 "Talk like a normal person in a small group trying to produce a useful "
-                "deliverable. Reply to the last useful point, ask a question, push back, "
-                "concede, or propose a merge. Do not write the words interrupt, score, "
-                "tendency, rationale, alignment, or threshold. One or two plain sentences."
+                "deliverable. Before choosing what to say, anchor in your personal "
+                "survey evidence: your background, skills, interests, values, and "
+                "work history should shape the proposal more than generic task fit. "
+                "Reply to the last useful point, ask a question, push back, concede, "
+                "or propose a merge. Do not write the words interrupt, score, tendency, "
+                "rationale, alignment, or threshold. One or two plain sentences."
             ),
         },
         {
@@ -483,7 +502,9 @@ def _default_rounds() -> list[dict[str, Any]]:
                 "Topic: {topic_prompt}\nShared objective: {alignment_goal}\n"
                 "Private notes that informed but did not appear in chat:\n{private_memory}\n\n"
                 "Full transcript:\n{transcript}\n\n{output_contract}\n\n"
-                "Write the final artifact. Do not include the raw transcript."
+                "Write the final artifact. Explain why this particular team, given "
+                "its members' backgrounds, skills, interests, values, and stated "
+                "motivations, would choose this project. Do not include the raw transcript."
             ),
         },
     ]
