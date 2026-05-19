@@ -1,11 +1,14 @@
 import io
 import json
+import os
+import sys
 import tempfile
+import types
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
 
-from simula_crew.clients import DryRunClient
+from simula_crew.clients import ClaudeSDKClient, DryRunClient
 from simula_crew.cli import _default_model, _load_document_dir, main
 from simula_crew.engine import run_experiment
 from simula_crew.google_drive import google_sheet_export_url
@@ -507,6 +510,46 @@ class ChatCliTests(unittest.TestCase):
             self.assertIn("SimulaCrew Chat", output)
             self.assertIn("room state", output)
             self.assertLess(output.count("room state"), output.count("message"))
+
+
+class ClaudeClientTests(unittest.TestCase):
+    def test_claude_sdk_options_do_not_cap_turns_at_one(self) -> None:
+        captured = {}
+
+        class FakeOptions:
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+
+        async def fake_query(*, prompt, options):
+            yield types.SimpleNamespace(result="done")
+
+        fake_module = types.SimpleNamespace(
+            ClaudeAgentOptions=FakeOptions,
+            query=fake_query,
+        )
+        old_module = sys.modules.get("claude_agent_sdk")
+        old_key = os.environ.get("ANTHROPIC_API_KEY")
+        sys.modules["claude_agent_sdk"] = fake_module
+        os.environ["ANTHROPIC_API_KEY"] = "test-key"
+        try:
+            client = ClaudeSDKClient()
+            result = client.complete(
+                system_prompt="system",
+                user_prompt="user",
+                model="sonnet",
+            )
+        finally:
+            if old_module is None:
+                sys.modules.pop("claude_agent_sdk", None)
+            else:
+                sys.modules["claude_agent_sdk"] = old_module
+            if old_key is None:
+                os.environ.pop("ANTHROPIC_API_KEY", None)
+            else:
+                os.environ["ANTHROPIC_API_KEY"] = old_key
+
+        self.assertEqual(result, "done")
+        self.assertNotIn("max_turns", captured)
 
 
 class EngineTests(unittest.TestCase):

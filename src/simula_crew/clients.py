@@ -305,7 +305,6 @@ class ClaudeSDKClient:
             permission_mode="default",
             system_prompt=system_prompt,
             model=model,
-            max_turns=1,
         )
         result_text = ""
         async for message in self._query(prompt=user_prompt, options=options):
