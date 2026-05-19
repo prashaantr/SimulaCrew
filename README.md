@@ -99,7 +99,7 @@ Run a no-API dry run:
 simulacrew run configs/simulacra.json
 ```
 
-By default the CLI prints a live, jury-sim-style conversation: each agent briefly thinks, then the group chats normally, with occasional natural cut-ins. The recorder writes the PRD only after discussion ends. This is not token-by-token streaming, but it prints before and after each agent call so long Claude runs do not look frozen.
+By default the CLI prints a live, [jury-sim-style conversation](https://github.com/prashaantr/jurysim): each agent briefly thinks, then the group chats normally, with occasional natural cut-ins. The recorder writes the PRD only after discussion ends. This is not token-by-token streaming, but it prints before and after each agent call so long Claude runs do not look frozen.
 
 To disable live output and print only the final summary:
 
@@ -438,6 +438,17 @@ The independent thinking phase is parallelized because each private thought depe
              ordered private round     same-agent memory
 ```
 
+In live mode, SimulaCrew prints a thinking line for every agent as soon as that private call starts:
+
+```text
+░ Mara thinking (turn 1)
+░ Niko thinking (turn 2)
+░ Sol thinking (turn 3)
+░ June thinking (turn 4)
+```
+
+Those private calls may finish in a different order, but the saved private round is kept in configured agent order.
+
 Configure the worker count in `configs/simulacra.json`:
 
 ```json
@@ -495,7 +506,7 @@ Possible group-chat moves are configured in the preset prompt and harness rules:
 
 The agents are instructed to act like a small working group, not like essay writers. Normal turns should be one to three lines. Internal scores, classifier rationales, and private thoughts are hidden from the CLI by default so the transcript reads like a group chat.
 
-Live CLI output is intentionally shaped like the `jurysim` room transcript:
+Live CLI output is intentionally shaped like the [`jurysim`](https://github.com/prashaantr/jurysim) room transcript:
 
 ```text
 ----------------------------------------------------------------------------------------

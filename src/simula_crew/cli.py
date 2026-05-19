@@ -284,7 +284,9 @@ def _live_event_printer(*, show_interruption_notes: bool = False):
             label, verb = _action_label(action)
             score_text = _score_text(score)
             message = f"{agent} {verb} (turn {turn}){score_text}"
-            if sys.stdout.isatty():
+            if action == "private":
+                print(color(f"░ {message}", style + Style.DIM), flush=True)
+            elif sys.stdout.isatty():
                 if indicator:
                     indicator.stop()
                 indicator = TypingIndicator(message)
