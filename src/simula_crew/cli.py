@@ -53,6 +53,8 @@ def build_parser() -> argparse.ArgumentParser:
               simulacrew run configs/experiments/simulacra.yaml
               simulacrew run configs/experiments/simulacra.yaml --prompt "What should the crew decide?"
               simulacrew run configs/experiments/simulacra.yaml --provider claude --interruption-classifier llm --prompt-file challenge.txt
+              simulacrew chat
+              simulacrew chat --provider claude --interruption-classifier llm
 """
         ),
     )
@@ -178,6 +180,53 @@ def build_parser() -> argparse.ArgumentParser:
         help="Show internal interruption scores and classifier rationale in the live transcript.",
     )
 
+    chat_parser = subparsers.add_parser(
+        "chat",
+        help="Open a chat-style prompt loop for running simulations.",
+    )
+    chat_parser.add_argument(
+        "experiment",
+        nargs="?",
+        default="configs/experiments/simulacra.yaml",
+        help="Experiment file to run. Defaults to configs/experiments/simulacra.yaml.",
+    )
+    chat_parser.add_argument(
+        "--message",
+        default=None,
+        help="Run one chat message and exit. Useful for scripts and tests.",
+    )
+    chat_parser.add_argument("--var", action="append", default=None, metavar="KEY=VALUE")
+    chat_parser.add_argument(
+        "--provider",
+        choices=["dry-run", "openai", "claude"],
+        default="dry-run",
+    )
+    chat_parser.add_argument("--model", default=None)
+    chat_parser.add_argument(
+        "--interruption-classifier",
+        choices=["deterministic", "llm"],
+        default="deterministic",
+        help="Use deterministic personality scoring or an LLM classifier for interruption decisions.",
+    )
+    chat_parser.add_argument(
+        "--classifier-model",
+        default=None,
+        help="Model for LLM interruption classification. Defaults to --model.",
+    )
+    chat_parser.add_argument("--temperature", type=float, default=0.2)
+    chat_parser.add_argument("--max-agents", type=int, default=None)
+    chat_parser.add_argument("--output-dir", default="runs")
+    chat_parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Only print output file paths after each run.",
+    )
+    chat_parser.add_argument(
+        "--show-interruption-notes",
+        action="store_true",
+        help="Show internal interruption scores and classifier rationale in the live transcript.",
+    )
+
     return parser
 
 
@@ -195,6 +244,8 @@ def main(argv: list[str] | None = None) -> int:
         return _ingest_google_survey(args, parser)
     if args.command == "run":
         return _run(args, parser)
+    if args.command == "chat":
+        return _chat(args, parser)
 
     parser.print_help()
     return 0
@@ -441,6 +492,226 @@ def _run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     return 0
 
 
+def _chat(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    if args.max_agents is not None and args.max_agents <= 0:
+        parser.error("--max-agents must be greater than zero")
+    if args.temperature < 0 or args.temperature > 2:
+        parser.error("--temperature must be between 0 and 2")
+
+    try:
+        base_experiment = load_experiment(args.experiment)
+        variables = parse_variable_assignments(args.var)
+        client = create_client(args.provider)
+        model = args.model or _default_model(args.provider)
+        interruption_classifier = None
+        if args.interruption_classifier == "llm":
+            interruption_classifier = LLMInterruptionClassifier(
+                client=client,
+                model=args.classifier_model or model,
+            )
+    except (ConfigError, RuntimeError, ValueError) as exc:
+        parser.exit(2, f"error: {exc}\n")
+
+    if args.quiet and args.message is None:
+        parser.error("--quiet is only supported with --message")
+    if args.message is None and not sys.stdin.isatty():
+        parser.error("chat mode needs a terminal, or pass --message")
+
+    if not args.quiet:
+        print(logo())
+        print(_chat_welcome(base_experiment.name, base_experiment.task.title, args.provider, model))
+
+    messages = [args.message] if args.message is not None else None
+    while True:
+        if messages is None:
+            message = _chat_input()
+        else:
+            message = messages.pop(0) if messages else None
+        if message is None:
+            break
+        message = message.strip()
+        if not message:
+            continue
+        if message.lower() in {"exit", "quit", ":q"}:
+            if not args.quiet:
+                print(_chat_system("Session closed."))
+            break
+
+        try:
+            json_path, conversation_path = _run_chat_message(
+                base_experiment=base_experiment,
+                experiment_path=Path(args.experiment),
+                message=message,
+                variables=variables,
+                client=client,
+                model=model,
+                temperature=args.temperature,
+                max_agents=args.max_agents,
+                interruption_classifier=interruption_classifier,
+                output_dir=args.output_dir,
+                provider=args.provider,
+                classifier_mode=args.interruption_classifier,
+                show_interruption_notes=args.show_interruption_notes,
+                quiet=args.quiet,
+            )
+        except (ConfigError, RuntimeError, ValueError) as exc:
+            parser.exit(2, f"error: {exc}\n")
+
+        if args.quiet:
+            print(json_path)
+            print(conversation_path)
+        else:
+            print(_chat_artifacts(json_path, conversation_path))
+
+        if messages is not None:
+            break
+    return 0
+
+
+def _run_chat_message(
+    *,
+    base_experiment,
+    experiment_path: Path,
+    message: str,
+    variables: dict[str, str],
+    client,
+    model: str,
+    temperature: float,
+    max_agents: int | None,
+    interruption_classifier,
+    output_dir: str,
+    provider: str,
+    classifier_mode: str,
+    show_interruption_notes: bool,
+    quiet: bool,
+) -> tuple[Path, Path]:
+    experiment = apply_runtime_inputs(
+        base_experiment,
+        prompt=message,
+        variables=variables,
+    )
+    event_callback = None
+    if not quiet:
+        print(_chat_bubble("You", message, accent=Style.CORAL))
+        print(_chat_system("Crew is deliberating. Live transcript follows."))
+        event_callback = _live_event_printer(
+            show_interruption_notes=show_interruption_notes,
+            chat_style=True,
+        )
+    result = run_experiment(
+        experiment=experiment,
+        client=client,
+        model=model,
+        temperature=temperature,
+        max_agents=max_agents,
+        interruption_classifier=interruption_classifier,
+        event_callback=event_callback,
+        run_metadata={
+            "experiment_path": str(experiment_path),
+            "output_dir": str(Path(output_dir)),
+            "interruption_classifier": classifier_mode,
+            "chat_interface": True,
+            "provider": provider,
+        },
+    )
+    return save_experiment_result(result, output_dir)
+
+
+def _chat_welcome(
+    experiment_name: str,
+    task_title: str,
+    provider: str,
+    model: str,
+) -> str:
+    rows = [
+        color("SimulaCrew Chat", Style.BOLD + Style.CORAL),
+        color(task_title, Style.MUTED),
+        "",
+        f"{color('experiment', Style.BOLD):<20} {experiment_name}",
+        f"{color('provider', Style.BOLD):<20} {provider}",
+        f"{color('model', Style.BOLD):<20} {model}",
+        "",
+        color("Type a simulation prompt. Use exit, quit, or :q to leave.", Style.MUTED),
+    ]
+    return _rounded_box(rows, title="chat")
+
+
+def _chat_input() -> str:
+    try:
+        return input(color("\nsimulacrew ", Style.BOLD + Style.CORAL) + color("› ", Style.BOLD))
+    except EOFError:
+        return "exit"
+
+
+def _chat_system(message: str) -> str:
+    return _chat_bubble("SimulaCrew", message, accent=Style.MUTED)
+
+
+def _chat_artifacts(json_path: Path, conversation_path: Path) -> str:
+    return _rounded_box(
+        [
+            color("Saved artifacts", Style.BOLD + Style.CORAL),
+            f"{color('json', Style.BOLD):<14} {json_path}",
+            f"{color('conversation', Style.BOLD):<14} {conversation_path}",
+        ],
+        title="done",
+    )
+
+
+def _chat_bubble(
+    speaker: str,
+    body: str,
+    *,
+    accent: str,
+    width: int = 88,
+) -> str:
+    content_width = max(36, width - 6)
+    lines = [
+        color(f"{speaker}", Style.BOLD + accent),
+        "",
+    ]
+    for paragraph in body.strip().splitlines() or [""]:
+        wrapped = wrap_text(paragraph, width=content_width) if paragraph else [""]
+        lines.extend(wrapped)
+    return _rounded_box(lines, title="message", width=width, accent=accent)
+
+
+def _rounded_box(
+    lines: list[str],
+    *,
+    title: str,
+    width: int = 88,
+    accent: str = Style.CORAL,
+) -> str:
+    width = max(44, width)
+    title_text = f" {title} "
+    top = "╭─" + title_text + "─" * max(0, width - len(title_text) - 3) + "╮"
+    bottom = "╰" + "─" * (width - 2) + "╯"
+    rendered = [color(top, accent)]
+    inner_width = width - 4
+    for line in lines:
+        plain_len = _visible_len(line)
+        padding = " " * max(0, inner_width - plain_len)
+        rendered.append(color("│ ", accent) + line + padding + color(" │", accent))
+    rendered.append(color(bottom, accent))
+    return "\n".join(rendered)
+
+
+def _visible_len(text: str) -> int:
+    length = 0
+    in_escape = False
+    for char in text:
+        if char == "\033":
+            in_escape = True
+            continue
+        if in_escape:
+            if char == "m":
+                in_escape = False
+            continue
+        length += 1
+    return length
+
+
 def _default_model(provider: str) -> str:
     if provider == "claude":
         return "haiku"
@@ -472,16 +743,20 @@ def _print_run_header(
     )
 
 
-def _live_event_printer(*, show_interruption_notes: bool = False):
+def _live_event_printer(*, show_interruption_notes: bool = False, chat_style: bool = False):
     speaker_styles: dict[str, str] = {}
     indicator: TypingIndicator | None = None
+    last_alignment_payload: dict | None = None
 
     def handle(event_type: str, payload: dict) -> None:
-        nonlocal indicator
+        nonlocal indicator, last_alignment_payload
         if event_type == "round_start":
             if indicator:
                 indicator.stop()
                 indicator = None
+            if chat_style and last_alignment_payload:
+                print(_alignment_status(last_alignment_payload, speaker_styles), flush=True)
+                last_alignment_payload = None
             title = payload["round_title"]
             mode = str(payload["round_mode"]).upper()
             print(_conversation_phase(mode, title), flush=True)
@@ -525,16 +800,28 @@ def _live_event_printer(*, show_interruption_notes: bool = False):
             statement = payload["statement"]
             style = _style_for_speaker(statement.agent_id, speaker_styles)
             print(
-                _conversation_statement(
-                    statement,
-                    style,
-                    show_interruption_notes=show_interruption_notes,
+                (
+                    _chat_statement(
+                        statement,
+                        style,
+                        show_interruption_notes=show_interruption_notes,
+                    )
+                    if chat_style
+                    else _conversation_statement(
+                        statement,
+                        style,
+                        show_interruption_notes=show_interruption_notes,
+                    )
                 ),
                 flush=True,
             )
             return
 
         if event_type == "alignment_update":
+            if chat_style and not _should_show_chat_alignment(payload):
+                last_alignment_payload = payload
+                return
+            last_alignment_payload = None
             print(_alignment_status(payload, speaker_styles), flush=True)
             return
 
@@ -542,6 +829,9 @@ def _live_event_printer(*, show_interruption_notes: bool = False):
             if indicator:
                 indicator.stop()
                 indicator = None
+            if chat_style and last_alignment_payload:
+                print(_alignment_status(last_alignment_payload, speaker_styles), flush=True)
+                last_alignment_payload = None
             print(color("Goal convergence reached. Moving to PRD.", Style.DIM), flush=True)
             return
 
@@ -549,10 +839,23 @@ def _live_event_printer(*, show_interruption_notes: bool = False):
             if indicator:
                 indicator.stop()
                 indicator = None
+            if chat_style and last_alignment_payload:
+                print(_alignment_status(last_alignment_payload, speaker_styles), flush=True)
+                last_alignment_payload = None
             print(color("Discussion time limit reached. Moving to PRD.", Style.DIM), flush=True)
             return
 
     return handle
+
+
+def _should_show_chat_alignment(payload: dict) -> bool:
+    if payload.get("aligned"):
+        return True
+    try:
+        turn_number = int(payload.get("turn_number", 0))
+    except (TypeError, ValueError):
+        return False
+    return turn_number > 0 and turn_number % 4 == 0
 
 
 def _conversation_phase(mode: str, title: str) -> str:
@@ -592,6 +895,28 @@ def _conversation_statement(
         for line in wrapped:
             lines.append("  " + line)
     return "\n".join(lines) + "\n"
+
+
+def _chat_statement(
+    statement,
+    speaker_style: str,
+    *,
+    show_interruption_notes: bool = False,
+) -> str:
+    label, _ = _action_label(statement.event_type)
+    time_text = datetime.now().strftime("%H:%M:%S")
+    score = (
+        statement.metadata.get("interruption_score")
+        if statement.event_type == "interrupt" and show_interruption_notes
+        else None
+    )
+    score_text = _score_text(score)
+    title = f"{statement.agent_name} · {label.lower()} · {time_text}{score_text}"
+    if statement.event_type == "thought":
+        body = "[stays quiet]"
+    else:
+        body = statement.content.strip()
+    return _chat_bubble(title, body, accent=speaker_style)
 
 
 def _action_label(action: str) -> tuple[str, str]:

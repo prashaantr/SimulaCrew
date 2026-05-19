@@ -10,3 +10,9 @@ dist/
 build/
 *.egg-info/
 .env
+web/.env.local
+web/data/
+web/node_modules/
+web/.next/
+web/out/
+web/tsconfig.tsbuildinfo

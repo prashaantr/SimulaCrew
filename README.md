@@ -142,6 +142,44 @@ simulacrew run configs/experiments/simulacra.yaml
 
 This is called `dry-run` because it does not call Claude or OpenAI. It uses deterministic placeholder responses so you can test install, CLI rendering, file output, state updates, and stopping logic without spending API calls.
 
+Open the chat-style CLI:
+
+```bash
+simulacrew chat
+```
+
+The chat interface uses the same engine as `run`, but lets you type a task prompt directly instead of rebuilding a long command. It starts with the big SimulaCrew ASCII mark, renders agent turns as warm rounded terminal bubbles, prints the room-state panel periodically instead of after every message, then writes the same `runs/*.json` and `runs/*.txt` artifacts.
+
+```text
+███████╗██╗███╗   ███╗██╗   ██╗██╗      █████╗  ██████╗██████╗ ███████╗██╗    ██╗
+██╔════╝██║████╗ ████║██║   ██║██║     ██╔══██╗██╔════╝██╔══██╗██╔════╝██║    ██║
+███████╗██║██╔████╔██║██║   ██║██║     ███████║██║     ██████╔╝█████╗  ██║ █╗ ██║
+╚════██║██║██║╚██╔╝██║██║   ██║██║     ██╔══██║██║     ██╔══██╗██╔══╝  ██║███╗██║
+███████║██║██║ ╚═╝ ██║╚██████╔╝███████╗██║  ██║╚██████╗██║  ██║███████╗╚███╔███╔╝
+╚══════╝╚═╝╚═╝     ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝╚══════╝ ╚══╝╚══╝
+
+╭─ chat ────────────────────────────────────────────────────────────────────────╮
+│ SimulaCrew Chat                                                               │
+│ Simulacra Test Debate                                                         │
+│                                                                              │
+│ experiment  simulacra                                                         │
+│ provider    dry-run                                                           │
+│ model       dry-run-model                                                     │
+│                                                                              │
+│ Type a simulation prompt. Use exit, quit, or :q to leave.                    │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+simulacrew › what project should we build for a future-of-work hackathon?
+```
+
+Run one chat message and exit:
+
+```bash
+simulacrew chat configs/experiments/simulacra.yaml \
+  --message "what project should we build for a future-of-work hackathon?" \
+  --max-agents 2
+```
+
 Run a real Claude simulation:
 
 ```bash
@@ -285,6 +323,54 @@ Outputs are written to `runs/`:
 
 The final recorder turn contains the PRD. The conversation log is intentionally compact text, not a giant Markdown transcript.
 
+## Web Group Chat UI
+
+SimulaCrew also includes a local Next.js UI for a group-chat view plus a buildathon team dashboard.
+
+```text
++--------------------------------------------------------------------------------+
+| WEB UI                                                                         |
++--------------------------------------------------------------------------------+
+| Prompt composer     ->  /api/simulate  ->  Python SimulaCrew engine            |
+| Team dashboard      ->  /api/teams     ->  local JSON path from env            |
+| Chat transcript     <-  runs/web/*.json <-  agent turns + room state + PRD      |
++--------------------------------------------------------------------------------+
+```
+
+Run it locally:
+
+```bash
+cd web
+npm install
+cp .env.example .env.local
+```
+
+Edit `web/.env.local` so it points at your local team file:
+
+```bash
+SIMULACREW_TEAM_INFO_PATH=/absolute/path/to/buildathon_team_info.json
+```
+
+Then start the UI:
+
+```bash
+npm run dev
+```
+
+Open <http://localhost:3000>. The default provider is `dry-run`; select `claude` in the UI when your Python environment has Claude support installed and `ANTHROPIC_API_KEY` exported.
+
+The team file is intentionally not committed. These local-only paths are ignored:
+
+```text
+web/.env.local
+web/data/
+web/node_modules/
+web/.next/
+web/out/
+```
+
+You can either keep the team JSON in Downloads and point `SIMULACREW_TEAM_INFO_PATH` at it, or copy it into `web/data/buildathon_team_info.json`. Both options keep the actual team data out of git.
+
 ## CLI Map
 
 ```text
@@ -299,6 +385,9 @@ The final recorder turn contains the PRD. The conversation log is intentionally 
 |                                                                                |
 | simulacrew run configs/experiments/simulacra.yaml                                          |
 |   run dry-run mode without an API                                              |
+|                                                                                |
+| simulacrew chat                                                                |
+|   open the chat-style prompt loop for repeated simulation prompts              |
 |                                                                                |
 | simulacrew run configs/experiments/simulacra.yaml --provider claude --model opus           |
 |   run live agents through Claude Agent SDK                                     |
@@ -316,6 +405,7 @@ The final recorder turn contains the PRD. The conversation log is intentionally 
 | --no-live                              print summary after completion           |
 | --max-agents 2                         use the first N agents                   |
 | --output-dir runs/demo                 choose output directory                  |
+| chat --message "..."                   run one chat prompt and exit             |
 +--------------------------------------------------------------------------------+
 ```
 

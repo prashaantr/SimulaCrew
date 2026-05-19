@@ -452,6 +452,59 @@ class SurveyIngestionTests(unittest.TestCase):
         )
 
 
+class ChatCliTests(unittest.TestCase):
+    def test_chat_message_runs_one_prompt_and_writes_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                exit_code = main(
+                    [
+                        "chat",
+                        str(EXPERIMENT_PATH),
+                        "--message",
+                        "What should we build for a future-of-work hackathon?",
+                        "--max-agents",
+                        "2",
+                        "--output-dir",
+                        temp_dir,
+                        "--quiet",
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            paths = [Path(line) for line in stdout.getvalue().splitlines() if line.strip()]
+            self.assertEqual(len(paths), 2)
+            self.assertTrue(paths[0].exists())
+            self.assertTrue(paths[1].exists())
+            payload = json.loads(paths[0].read_text(encoding="utf-8"))
+            self.assertEqual(payload["task_prompt"], "What should we build for a future-of-work hackathon?")
+            self.assertTrue(payload["metadata"]["chat_interface"])
+
+    def test_chat_live_output_starts_with_ascii_and_spaces_state_blocks(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                exit_code = main(
+                    [
+                        "chat",
+                        str(EXPERIMENT_PATH),
+                        "--message",
+                        "Pick one quick demo idea.",
+                        "--max-agents",
+                        "2",
+                        "--output-dir",
+                        temp_dir,
+                    ]
+                )
+
+            output = stdout.getvalue()
+            self.assertEqual(exit_code, 0)
+            self.assertIn("███████╗██╗", output)
+            self.assertIn("SimulaCrew Chat", output)
+            self.assertIn("room state", output)
+            self.assertLess(output.count("room state"), output.count("message"))
+
+
 class EngineTests(unittest.TestCase):
     def test_dry_run_executes_full_experiment(self) -> None:
         experiment = load_experiment(EXPERIMENT_PATH)
