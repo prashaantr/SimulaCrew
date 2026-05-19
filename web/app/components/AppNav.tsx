@@ -1,7 +1,7 @@
 import Link from "next/link";
 
 type AppNavProps = {
-  section: "teams" | "chat";
+  section: "teams" | "chat" | "runs";
 };
 
 export function AppNav({ section }: AppNavProps) {
@@ -20,6 +20,9 @@ export function AppNav({ section }: AppNavProps) {
         </Link>
         <Link className={section === "chat" ? "active" : ""} href="/chat">
           /chat
+        </Link>
+        <Link className={section === "runs" ? "active" : ""} href="/runs">
+          /runs
         </Link>
       </nav>
     </header>

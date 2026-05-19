@@ -31,7 +31,7 @@ export async function POST(request: NextRequest) {
   );
   const provider = payload.provider || "dry-run";
   const python = resolvePython(repoRoot);
-  const outputDir = path.join(repoRoot, "runs", "web");
+  const outputDir = path.join(repoRoot, "web", "run_outputs");
 
   const args = [
     "-m",
