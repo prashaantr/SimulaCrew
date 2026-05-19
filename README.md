@@ -63,6 +63,19 @@ export ANTHROPIC_API_KEY='your-key'
 
 Do not commit real keys. Use `.env.example` only as a template.
 
+If you see this error:
+
+```text
+error: Claude support requires: pip install -e '.[claude]'
+```
+
+run:
+
+```bash
+source .venv/bin/activate
+pip install -e '.[claude]'
+```
+
 ## Run The CLI
 
 List presets:
@@ -83,6 +96,14 @@ Run a no-API dry run:
 simulacrew run configs/simulacra.json
 ```
 
+By default the CLI prints live progress: each round starts, each agent is asked, and each completed agent response is printed immediately. This is not token-by-token streaming, but it prevents long Claude runs from looking frozen.
+
+To disable live output and print only the final summary:
+
+```bash
+simulacrew run configs/simulacra.json --no-live
+```
+
 Run with a custom prompt:
 
 ```bash
@@ -98,6 +119,18 @@ simulacrew run configs/simulacra.json \
   --model sonnet \
   --prompt-file challenge.txt
 ```
+
+Run with Claude and an inline one-line prompt:
+
+```bash
+simulacrew run configs/simulacra.json \
+  --provider claude \
+  --model sonnet \
+  --interruption-classifier llm \
+  --prompt "Should we build the moral deliberation simulator first or the general agent harness first?"
+```
+
+Keep inline prompts on one line unless you intentionally want a newline inside the prompt.
 
 Use Claude for interruption classification too:
 
@@ -127,6 +160,7 @@ simulacrew
     ├── --prompt-file challenge.txt
     ├── --provider dry-run|claude|openai
     ├── --interruption-classifier deterministic|llm
+    ├── --no-live
     ├── --max-agents 2
     └── --output-dir runs/demo
 ```

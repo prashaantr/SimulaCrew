@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from textwrap import dedent
 from pathlib import Path
 
 from simula_crew.clients import create_client
@@ -9,13 +10,35 @@ from simula_crew.io import list_configs, load_config, save_result
 from simula_crew.runtime import apply_runtime_inputs, parse_variable_assignments
 from simula_crew.scoring import LLMInterruptionClassifier
 from simula_crew.schema import ConfigError, CrewResult
-from simula_crew.terminal import Style, banner, color, key_value, section, wrap
+from simula_crew.terminal import (
+    Style,
+    banner,
+    card,
+    color,
+    key_value,
+    logo,
+    panel,
+    section,
+    tree,
+    wrap,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="simulacrew",
         description="Run personality-driven agent crews that debate, interrupt, and synthesize.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=dedent(
+            """
+            examples:
+              simulacrew list
+              simulacrew inspect configs/simulacra.json
+              simulacrew run configs/simulacra.json
+              simulacrew run configs/simulacra.json --prompt "What should the crew decide?"
+              simulacrew run configs/simulacra.json --provider claude --model sonnet --interruption-classifier llm --prompt-file challenge.txt
+            """
+        ),
     )
     subparsers = parser.add_subparsers(dest="command")
 
@@ -55,6 +78,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Only print output file paths.",
     )
+    run_parser.add_argument(
+        "--no-live",
+        action="store_true",
+        help="Disable live per-agent output and print a summary at the end.",
+    )
 
     return parser
 
@@ -75,7 +103,8 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _list_presets(config_dir: str) -> int:
-    print(banner("SimulaCrew", "personality-driven agent debate harness"))
+    print(logo())
+    print(banner("Agent Debate CLI", "personality-driven crews with interruption mechanics"))
     configs = list_configs(config_dir)
     if not configs:
         print("No presets found.")
@@ -83,27 +112,46 @@ def _list_presets(config_dir: str) -> int:
     print(section("Presets"))
     for config_path in configs:
         config = load_config(config_path)
-        print(key_value(config.name, str(config_path)))
-        print("  " + wrap(config.description, width=84))
+        print(panel(config.name, f"{config.description}\npath: {config_path}", width=88))
     return 0
 
 
 def _inspect(config_path: str) -> int:
     config = load_config(config_path)
+    print(logo())
     print(banner(config.name, config.description))
+    print(
+        card(
+            "Preset",
+            [
+                ("file", config_path),
+                ("agents", str(len(config.agents))),
+                ("rounds", str(len(config.rounds))),
+                ("topic", config.topic.title),
+            ],
+            width=88,
+        )
+    )
     print(section("Topic"))
     print(wrap(config.topic.prompt))
     print(section("Agents"))
     for agent in config.agents:
-        print(color(agent.name, Style.BOLD + Style.GREEN))
-        print("  " + wrap(agent.base_prompt, width=84))
+        print(panel(agent.name, agent.base_prompt, width=88))
         if agent.personality:
             traits = ", ".join(f"{key}={value}" for key, value in sorted(agent.personality.items()))
             print("  " + color(traits, Style.DIM))
     print(section("Rounds"))
-    for round_spec in config.rounds:
-        detail = f"{round_spec.mode}, max_turns={round_spec.max_turns or 'n/a'}"
-        print(key_value(round_spec.title, detail))
+    print(
+        tree(
+            [
+                (
+                    round_spec.title,
+                    f"[{round_spec.mode}, max_turns={round_spec.max_turns or 'n/a'}]",
+                )
+                for round_spec in config.rounds
+            ]
+        )
+    )
     return 0
 
 
@@ -130,6 +178,10 @@ def _run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
                 client=client,
                 model=args.classifier_model or model,
             )
+        event_callback = None
+        if not args.quiet and not args.no_live:
+            _print_run_header(config.name, config.topic.title, args.provider, model)
+            event_callback = _live_event_printer()
         result = run_crew(
             config=config,
             client=client,
@@ -137,6 +189,7 @@ def _run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
             temperature=args.temperature,
             max_agents=args.max_agents,
             interruption_classifier=interruption_classifier,
+            event_callback=event_callback,
             run_metadata={
                 "config_path": str(Path(args.config)),
                 "output_dir": str(Path(args.output_dir)),
@@ -152,20 +205,97 @@ def _run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
         print(markdown_path)
         return 0
 
-    _print_run_summary(result)
+    if args.no_live:
+        _print_run_summary(result)
     print(section("Artifacts"))
     print(key_value("JSON", str(json_path)))
     print(key_value("Markdown", str(markdown_path)))
     return 0
 
 
+def _print_run_header(
+    config_name: str,
+    topic_title: str,
+    provider: str,
+    model: str,
+) -> None:
+    print(logo(), flush=True)
+    print(banner("SimulaCrew Live Run", topic_title), flush=True)
+    print(
+        card(
+            "Session",
+            [
+                ("config", config_name),
+                ("provider", provider),
+                ("model", model),
+                ("mode", "live per-agent output"),
+            ],
+            width=88,
+        ),
+        flush=True,
+    )
+
+
+def _live_event_printer():
+    def handle(event_type: str, payload: dict) -> None:
+        if event_type == "round_start":
+            title = payload["round_title"]
+            mode = str(payload["round_mode"]).upper()
+            print(section(f"{mode} :: {title}"), flush=True)
+            return
+
+        if event_type == "agent_start":
+            agent = payload["agent_name"]
+            turn = payload["turn_number"]
+            action = payload["event_type"]
+            score = payload.get("interruption_score")
+            score_text = f" | interruption score: {score}" if score is not None else ""
+            print(
+                color(f"> asking {agent} [{action} turn {turn}]{score_text}", Style.BOLD + Style.YELLOW),
+                flush=True,
+            )
+            rationale = payload.get("interruption_rationale")
+            if rationale:
+                print(color(f"  {rationale}", Style.DIM), flush=True)
+            return
+
+        if event_type == "statement":
+            statement = payload["statement"]
+            marker = "!" if statement.event_type == "interrupt" else ">"
+            title = f"{marker} {statement.agent_name} replied"
+            print(panel(title, statement.content.strip(), width=88), flush=True)
+
+    return handle
+
+
 def _print_run_summary(result: CrewResult) -> None:
+    print(logo())
     print(banner("SimulaCrew Run Complete", result.topic_title))
+    print(section("Run"))
+    print(
+        card(
+            "Session",
+            [
+                ("provider", result.provider),
+                ("model", result.model),
+                ("rounds", str(len(result.rounds))),
+                ("config", result.config_name),
+            ],
+            width=88,
+        )
+    )
     print(section("Deliberation"))
     for round_result in result.rounds:
-        print(color(round_result.title, Style.BOLD + Style.CYAN))
+        print(
+            panel(
+                f"{round_result.mode.upper()} :: {round_result.title}",
+                f"statements: {len(round_result.statements)} | transcript: {round_result.transcript_visibility}",
+                width=88,
+            )
+        )
         for statement in round_result.statements:
-            label = f"{statement.agent_name} [{statement.event_type} turn {statement.turn_number}]"
+            marker = "!" if statement.event_type == "interrupt" else ">"
+            label = f"{marker} {statement.agent_name} [{statement.event_type} turn {statement.turn_number}]"
             preview = " ".join(statement.content.split())[:180]
             print("  " + color(label, Style.BOLD))
-            print("  " + wrap(preview, width=84))
+            print("    " + wrap(preview, width=82))

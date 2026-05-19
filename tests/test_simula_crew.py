@@ -72,11 +72,13 @@ class RuntimeTests(unittest.TestCase):
 class EngineTests(unittest.TestCase):
     def test_dry_run_executes_interruption_round(self) -> None:
         config = load_config(REPO_ROOT / "configs" / "simulacra.json")
+        events = []
         result = run_crew(
             config=config,
             client=DryRunClient(),
             model="dry-run-model",
             max_agents=2,
+            event_callback=lambda event_type, payload: events.append((event_type, payload)),
         )
         self.assertEqual(result.config_name, "simulacra")
         interruption_round = next(
@@ -91,6 +93,11 @@ class EngineTests(unittest.TestCase):
                 for statement in interruption_round.statements
             )
         )
+        event_types = [event_type for event_type, _ in events]
+        self.assertIn("round_start", event_types)
+        self.assertIn("agent_start", event_types)
+        self.assertIn("statement", event_types)
+        self.assertGreater(event_types.index("agent_start"), event_types.index("round_start"))
 
         with tempfile.TemporaryDirectory() as output_dir:
             json_path, markdown_path = save_result(result, output_dir)

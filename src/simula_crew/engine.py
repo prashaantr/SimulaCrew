@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Callable
 
 from simula_crew.clients import ModelClient
 from simula_crew.prompts import (
@@ -33,6 +33,7 @@ def run_crew(
     temperature: float = 0.2,
     max_agents: int | None = None,
     interruption_classifier: InterruptionClassifier | None = None,
+    event_callback: Callable[[str, dict[str, Any]], None] | None = None,
     run_metadata: dict[str, Any] | None = None,
 ) -> CrewResult:
     agents = config.agents[:max_agents] if max_agents else list(config.agents)
@@ -41,23 +42,34 @@ def run_crew(
     round_results: list[RoundResult] = []
 
     for round_spec in config.rounds:
+        _emit(
+            event_callback,
+            "round_start",
+            {
+                "round_id": round_spec.id,
+                "round_title": round_spec.title,
+                "round_mode": round_spec.mode,
+            },
+        )
         participants = _select_agents(round_spec, agents, agent_by_id)
         if round_spec.mode == "private":
-            statements = [
-                _call_agent(
-                    config=config,
-                    round_spec=round_spec,
-                    agent=agent,
-                    transcript=list(transcript),
-                    client=client,
-                    model=model,
-                    temperature=temperature,
-                    turn_number=index + 1,
-                    event_type="private",
-                    extra={"turns_remaining": len(participants) - index - 1},
+            statements = []
+            for index, agent in enumerate(participants):
+                statements.append(
+                    _call_agent(
+                        config=config,
+                        round_spec=round_spec,
+                        agent=agent,
+                        transcript=list(transcript),
+                        client=client,
+                        model=model,
+                        temperature=temperature,
+                        turn_number=index + 1,
+                        event_type="private",
+                        extra={"turns_remaining": len(participants) - index - 1},
+                        event_callback=event_callback,
+                    )
                 )
-                for index, agent in enumerate(participants)
-            ]
         elif round_spec.mode in {"debate", "interruptions"}:
             statements = _run_group_round(
                 config=config,
@@ -68,6 +80,7 @@ def run_crew(
                 model=model,
                 temperature=temperature,
                 interruption_classifier=interruption_classifier,
+                event_callback=event_callback,
             )
         else:
             statements = [
@@ -78,6 +91,7 @@ def run_crew(
                     client=client,
                     model=model,
                     temperature=temperature,
+                    event_callback=event_callback,
                 )
             ]
 
@@ -125,6 +139,7 @@ def _run_group_round(
     model: str,
     temperature: float,
     interruption_classifier: InterruptionClassifier | None,
+    event_callback: Callable[[str, dict[str, Any]], None] | None,
 ) -> list[Statement]:
     if not participants:
         return []
@@ -178,6 +193,7 @@ def _run_group_round(
                 "interruption_rationale": decision.rationale if decision else "",
             },
             decision=decision,
+            event_callback=event_callback,
         )
         statements.append(statement)
     return statements
@@ -229,6 +245,7 @@ def _call_agent(
     event_type: str,
     extra: dict[str, Any] | None = None,
     decision: InterruptionDecision | None = None,
+    event_callback: Callable[[str, dict[str, Any]], None] | None = None,
 ) -> Statement:
     context = build_context(
         config=config,
@@ -243,6 +260,24 @@ def _call_agent(
     )
     system_prompt = build_agent_system_prompt(config, agent)
     user_prompt = render_template(round_spec.prompt, context)
+    _emit(
+        event_callback,
+        "agent_start",
+        {
+            "agent_id": agent.id,
+            "agent_name": agent.name,
+            "round_id": round_spec.id,
+            "round_title": round_spec.title,
+            "turn_number": turn_number,
+            "event_type": event_type,
+            "interruption_score": (
+                decision.score
+                if decision
+                else deterministic_interruption_score(agent, transcript)
+            ),
+            "interruption_rationale": decision.rationale if decision else None,
+        },
+    )
     content = client.complete(
         system_prompt=system_prompt,
         user_prompt=user_prompt,
@@ -256,7 +291,7 @@ def _call_agent(
             "event_type": event_type,
         },
     )
-    return Statement(
+    statement = Statement(
         agent_id=agent.id,
         agent_name=agent.name,
         round_id=round_spec.id,
@@ -272,6 +307,16 @@ def _call_agent(
             "round_title": round_spec.title,
         },
     )
+    _emit(
+        event_callback,
+        "statement",
+        {
+            "statement": statement,
+            "round_id": round_spec.id,
+            "round_title": round_spec.title,
+        },
+    )
+    return statement
 
 
 def _call_recorder(
@@ -282,6 +327,7 @@ def _call_recorder(
     client: ModelClient,
     model: str,
     temperature: float,
+    event_callback: Callable[[str, dict[str, Any]], None] | None = None,
 ) -> Statement:
     context = build_context(
         config=config,
@@ -304,6 +350,20 @@ def _call_recorder(
         if part.strip()
     )
     user_prompt = render_template(round_spec.prompt, context)
+    _emit(
+        event_callback,
+        "agent_start",
+        {
+            "agent_id": round_spec.speaker_id,
+            "agent_name": round_spec.speaker_name,
+            "round_id": round_spec.id,
+            "round_title": round_spec.title,
+            "turn_number": "synthesis",
+            "event_type": "synthesis",
+            "interruption_score": None,
+            "interruption_rationale": None,
+        },
+    )
     content = client.complete(
         system_prompt=system_prompt,
         user_prompt=user_prompt,
@@ -317,7 +377,7 @@ def _call_recorder(
             "event_type": "synthesis",
         },
     )
-    return Statement(
+    statement = Statement(
         agent_id=round_spec.speaker_id,
         agent_name=round_spec.speaker_name,
         round_id=round_spec.id,
@@ -326,3 +386,22 @@ def _call_recorder(
         content=content,
         metadata={"round_title": round_spec.title},
     )
+    _emit(
+        event_callback,
+        "statement",
+        {
+            "statement": statement,
+            "round_id": round_spec.id,
+            "round_title": round_spec.title,
+        },
+    )
+    return statement
+
+
+def _emit(
+    event_callback: Callable[[str, dict[str, Any]], None] | None,
+    event_type: str,
+    payload: dict[str, Any],
+) -> None:
+    if event_callback:
+        event_callback(event_type, payload)
