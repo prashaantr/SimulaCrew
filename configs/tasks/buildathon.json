@@ -1,0 +1,38 @@
+{
+  "title": "Build a Thon",
+  "prompt": "Overview: Your team is participating in the Wharton–Gates Build-a-thon, which is a hackathon-like event taking place alongside the AI and the Future of Work Conference, held at the Wharton School, University of Pennsylvania. The goal of the Build-a-thon is to develop projects focused on the future of work. Teams will work collaboratively throughout the day to produce outputs that can be shared on GitHub. Each team will present one slide as a demo during the conference’s closing session.\n\nDeliverable: The team’s goal is to scope a project that is executable within a single work day (roughly 5 hours), and that can be presented in a demo by the end of the three-day conference. The demo should be interesting and relevant to an interdisciplinary audience on AI and the future of work.\n\nThe format of the deliverable should be a markdown-formatted text string describing the project and its intended scope and details, as well as a breakdown of the tasks required to execute the project and an allocation of who will complete each task. The document should be clear, concise, and represent a realistic, executable plan for the project given the timeline.\n\nProject Ideas (initial ideas generated ahead of the Build-a-Thon):\nAndi/Prashaant: A tool to visualise the "state" (what’s done what’s missing) of an applied Econ research project\n(Morgan) Translating skills/jobs/experience across taxonomies (cut-out proprietary black boxes)\n(Morgan) connecting higher education with graduates' labor market outcomes using lots of syllabi + LinkedIn profiles\n(Daniel): train LLMs from scratch on job postings data (supplied by Revelio)... goal is to post on huggingface/github\nFrom Claudine: Dan, what’s the use case for this? Is it for researchers or job-seekers?\nMatt Z: Construct the first open occupation-level (maybe even task-level?) dataset/model of demand elasticity… something linking cost impacts / demand to help estimate the least understood part of the job impact puzzle.\n(Emily) Do agents that complete tasks in isolation struggle to piece together the whole? Select a series of realistic work tasks (e.g., from job data or O*NET) → simulate examples in which agents with different characteristics complete different steps → evaluate final output quality\nThe first step could just be a harness that runs the simulation (sample a task → deploy a bunch of agents that try to divide and conquer)\nAnother step could just focus on the question of how/whether agents subdivide and allocate the steps. Is it consistent? Is it optimal?\n(Emily) Front-end visualization tool for analyzing a conversation (can focus on human-AI conversations and training people to prompt better, detect specific AI communication patterns, flag concerning conversation patterns, etc.)\nVariation for just prompting: you write a prompt that you’d like to use and the tool annotates it with suggestions for how to make it sharper\n(Emily) Reverse task generator: existing tools take a task and identify characteristics/features from it. What about starting with skills or characteristics and being able to generate tasks that involve those characteristics? (This “reverse” question might be important for things like education, where students might learn some basic skills and want to know what kinds of tasks/jobs these are relevant for.)\nMatt B: What if we did something like this, but for skills (basically model supply-side dynamics on the skill complement required for a healthy job/org/econ): https://x.com/EpochAIResearch/status/2052509552776761580?s=20 \nMatt Z: Build then backtest a multi-factor displacement model (including current known data on demand elasticity, adaptability, firm adoption, exposure, etc.) on last couple years of labor data.\nMatt Z: The New Work Tracker: So many datasets measure destruction, let’s build one for creation tracking novel task language emerging in job postings, first-appearance dates by occupation, etc. \nSteve Lee: Tear the Paper Ceiling rewriter w/ bias measurement - employer side job description is rewritten focused on skills and experience over degree with rationale for each change. Then the old and new ads are run through a synthetic resume generation pool to show the shift in pass rates.\nAlex S: Modeling augmentation-vs-automation scenarios in archetypal firm structures / industries (i.e., firms that have X, Y, or Z combinations of roles / org structures), accounting for different levels of AI adoption maturity \nAlex S: Costs to perform the same bundle of tasks performed by human, AI/agentic, or hybrid systems under different conditions of compute/labor pricing \nMatt Z: Shameless plug: Build anything to improve / automate / add to:  jobsdata.ai \nAbby: What are people’s anxieties and perceptions of AI as it pertains to its impact on their own career? How does that influence their behavior when anticipating and navigating transitions?",
+  "target_user": "Academic researchers and industry practitioners interested in AI and the future of work, attending the conference.",
+  "success_criteria": "A focused, feasible project scope with clear tasks, realistic ownership, and a demo plan suitable for a single work day.",
+  "output_format": {
+    "type": "markdown",
+    "description": "Final synthesis must be a concise project brief in Markdown. Include: project overview, problem, proposed solution, intended scope, task breakdown, team allocation, demo plan, risks, and open questions. Preserve any unresolved dissent briefly.",
+    "required_sections": [
+      "project overview",
+      "problem",
+      "proposed solution",
+      "intended scope",
+      "task breakdown",
+      "team allocation",
+      "demo plan",
+      "risks",
+      "open questions"
+    ]
+  },
+  "variables": {
+    "time_budget": "Single work day (~5 hours) with a demo by end of the three-day conference",
+    "discussion_time_limit_minutes": 30,
+    "decision_pressure": "The team needs a clear, feasible scope today.",
+    "shared_goal": "Converge on one buildathon project idea and produce a concise execution plan with task assignments.",
+    "default_goal_alignment_start": 0.42,
+    "goal_alignment_threshold": 0.75,
+    "goal_alignment_min_turns": 8,
+    "goal_alignment_evaluator": "llm",
+    "goal_alignment_step_self": 0.055,
+    "goal_alignment_step_listener": 0.025,
+    "goal_alignment_interrupt_factor": 0.65,
+    "min_public_turns_before_interruptions": 3,
+    "idea_state_model": "haiku",
+    "idea_state_workers": 4,
+    "private_thinking_workers": 4
+  }
+}

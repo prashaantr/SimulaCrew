@@ -3,7 +3,7 @@ from __future__ import annotations
 from string import Formatter
 from typing import Any
 
-from simula_crew.schema import AgentPersona, CrewConfig, RoundSpec, Statement
+from simula_crew.schema import AgentPersona, ExperimentConfig, RoundSpec, Statement
 
 
 class PromptRenderError(ValueError):
@@ -104,19 +104,27 @@ def agent_values(agent: AgentPersona) -> dict[str, Any]:
 
 def build_context(
     *,
-    config: CrewConfig,
+    experiment: ExperimentConfig,
     round_spec: RoundSpec,
     transcript: list[Statement],
     agent: AgentPersona | None = None,
     extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    task = experiment.task
+    process = experiment.process
     values: dict[str, Any] = {
-        "config_name": config.name,
-        "topic_title": config.topic.title,
-        "topic_prompt": config.topic.prompt,
-        "target_user": config.topic.target_user,
-        "success_criteria": config.topic.success_criteria,
-        "agents": format_agents(config.agents),
+        "experiment_name": experiment.name,
+        # Backwards-compatible aliases for templates that still use the old names.
+        "config_name": experiment.name,
+        "task_title": task.title,
+        "task_prompt": task.prompt,
+        "topic_title": task.title,
+        "topic_prompt": task.prompt,
+        "target_user": task.target_user,
+        "success_criteria": task.success_criteria,
+        "output_format_description": task.output_format.description,
+        "output_format_type": task.output_format.type,
+        "agents": format_agents(experiment.agents),
         "transcript": format_transcript(
             transcript,
             visibility=round_spec.transcript_visibility,
@@ -127,16 +135,16 @@ def build_context(
         "round_max_turns": round_spec.max_turns or "unspecified",
         "interaction_rules": format_rules(
             "Interaction rules",
-            config.harness.interaction_rules,
+            process.interaction_rules,
         ),
         "interruption_rules": format_rules(
             "Interruption rules",
-            config.harness.interruption_rules,
+            process.interruption_rules,
         ),
-        "output_contract": config.harness.output_contract,
+        "output_contract": _output_contract(task),
         "private_memory": "No private notes.",
     }
-    values.update(config.topic.variables)
+    values.update(task.variables)
     if agent is not None:
         values.update(agent_values(agent))
     if extra:
@@ -144,24 +152,43 @@ def build_context(
     return values
 
 
-def build_agent_system_prompt(config: CrewConfig, agent: AgentPersona) -> str:
+def build_agent_system_prompt(
+    experiment: ExperimentConfig,
+    agent: AgentPersona,
+) -> str:
     values = build_context(
-        config=config,
-        round_spec=config.rounds[0],
+        experiment=experiment,
+        round_spec=experiment.process.rounds[0],
         transcript=[],
         agent=agent,
     )
     persona_contract = ""
-    if config.harness.character_prompt_template:
+    if experiment.process.character_prompt_template:
         persona_contract = render_template(
-            config.harness.character_prompt_template,
+            experiment.process.character_prompt_template,
             values,
         )
     parts = [
-        config.harness.shared_instructions,
+        experiment.process.shared_instructions,
         persona_contract,
-        format_rules("Interaction rules", config.harness.interaction_rules),
-        format_rules("Interruption rules", config.harness.interruption_rules),
+        format_rules("Interaction rules", experiment.process.interaction_rules),
+        format_rules("Interruption rules", experiment.process.interruption_rules),
         agent.base_prompt,
     ]
     return "\n\n".join(part for part in parts if part.strip())
+
+
+def _output_contract(task) -> str:
+    fmt = task.output_format
+    parts: list[str] = []
+    if fmt.description:
+        parts.append(fmt.description)
+    if fmt.required_sections:
+        parts.append(
+            "Required sections: " + ", ".join(fmt.required_sections)
+        )
+    if fmt.type == "json":
+        parts.append("Return valid JSON only. No prose, no Markdown fences.")
+    elif fmt.type == "number":
+        parts.append("Return a single numeric value.")
+    return "\n\n".join(parts)

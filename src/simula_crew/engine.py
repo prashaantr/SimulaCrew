@@ -24,17 +24,17 @@ from simula_crew.scoring import (
 )
 from simula_crew.schema import (
     AgentPersona,
-    CrewConfig,
-    CrewResult,
+    ExperimentConfig,
+    ExperimentResult,
     RoundResult,
     RoundSpec,
     Statement,
 )
 
 
-def run_crew(
+def run_experiment(
     *,
-    config: CrewConfig,
+    experiment: ExperimentConfig,
     client: ModelClient,
     model: str,
     temperature: float = 0.2,
@@ -42,16 +42,17 @@ def run_crew(
     interruption_classifier: InterruptionClassifier | None = None,
     event_callback: Callable[[str, dict[str, Any]], None] | None = None,
     run_metadata: dict[str, Any] | None = None,
-) -> CrewResult:
-    agents = config.agents[:max_agents] if max_agents else list(config.agents)
+) -> ExperimentResult:
+    agents = experiment.agents[:max_agents] if max_agents else list(experiment.agents)
     agent_by_id = {agent.id: agent for agent in agents}
     transcript: list[Statement] = []
     private_memory: dict[str, list[str]] = {}
-    goal_tracker = GoalTracker.create(config=config, agents=agents)
+    goal_tracker = GoalTracker.create(experiment=experiment, agents=agents)
     event_callback = _synchronized_callback(event_callback)
     round_results: list[RoundResult] = []
+    final_synthesis_content = ""
 
-    for round_spec in config.rounds:
+    for round_spec in experiment.process.rounds:
         _emit(
             event_callback,
             "round_start",
@@ -64,7 +65,7 @@ def run_crew(
         participants = _select_agents(round_spec, agents, agent_by_id)
         if round_spec.mode == "private":
             statements = _run_private_round(
-                config=config,
+                experiment=experiment,
                 round_spec=round_spec,
                 participants=participants,
                 transcript=list(transcript),
@@ -77,7 +78,7 @@ def run_crew(
             )
         elif round_spec.mode in {"debate", "discussion", "interruptions"}:
             statements = _run_group_round(
-                config=config,
+                experiment=experiment,
                 round_spec=round_spec,
                 participants=participants,
                 transcript=list(transcript),
@@ -90,19 +91,19 @@ def run_crew(
                 goal_tracker=goal_tracker,
             )
         else:
-            statements = [
-                _call_recorder(
-                    config=config,
-                    round_spec=round_spec,
-                    transcript=_public_transcript(transcript),
-                    client=client,
-                    model=model,
-                    temperature=temperature,
-                    event_callback=event_callback,
-                    private_memory=private_memory,
-                    goal_tracker=goal_tracker,
-                )
-            ]
+            synthesis_statement = _call_recorder(
+                experiment=experiment,
+                round_spec=round_spec,
+                transcript=_public_transcript(transcript),
+                client=client,
+                model=model,
+                temperature=temperature,
+                event_callback=event_callback,
+                private_memory=private_memory,
+                goal_tracker=goal_tracker,
+            )
+            statements = [synthesis_statement]
+            final_synthesis_content = synthesis_statement.content
 
         transcript.extend(statements)
         round_results.append(
@@ -116,16 +117,33 @@ def run_crew(
             )
         )
 
-    return CrewResult.create(
-        config=config,
+    thinking = _collect_thinking(round_results)
+    return ExperimentResult.create(
+        experiment=experiment,
         provider=client.provider,
         model=model,
         rounds=round_results,
+        raw_task_result=final_synthesis_content,
+        thinking=thinking,
         metadata={
             "max_agents": max_agents,
             **(run_metadata or {}),
         },
     )
+
+
+def _collect_thinking(round_results: list[RoundResult]) -> dict[str, list[str]]:
+    """Per-agent private thoughts: independent positions + stay-quiet notes."""
+    thinking: dict[str, list[str]] = {}
+    for round_result in round_results:
+        for statement in round_result.statements:
+            if statement.event_type == "private":
+                thinking.setdefault(statement.agent_id, []).append(statement.content)
+            elif statement.event_type == "thought":
+                note = statement.metadata.get("private_thought") or statement.content
+                if note and note != "[stays quiet]":
+                    thinking.setdefault(statement.agent_id, []).append(note)
+    return thinking
 
 
 def _select_agents(
@@ -140,7 +158,7 @@ def _select_agents(
 
 def _run_private_round(
     *,
-    config: CrewConfig,
+    experiment: ExperimentConfig,
     round_spec: RoundSpec,
     participants: list[AgentPersona],
     transcript: list[Statement],
@@ -155,12 +173,23 @@ def _run_private_round(
         return []
 
     results: dict[int, Statement] = {}
-    max_workers = min(len(participants), max(1, int(_number(config.topic.variables.get("private_thinking_workers"), len(participants)))))
+    max_workers = min(
+        len(participants),
+        max(
+            1,
+            int(
+                _number(
+                    experiment.task.variables.get("private_thinking_workers"),
+                    len(participants),
+                )
+            ),
+        ),
+    )
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {
             executor.submit(
                 _call_agent,
-                config=config,
+                experiment=experiment,
                 round_spec=round_spec,
                 agent=agent,
                 transcript=transcript,
@@ -190,7 +219,7 @@ def _run_private_round(
 
 def _run_group_round(
     *,
-    config: CrewConfig,
+    experiment: ExperimentConfig,
     round_spec: RoundSpec,
     participants: list[AgentPersona],
     transcript: list[Statement],
@@ -229,7 +258,7 @@ def _run_group_round(
         if round_spec.mode == "interruptions":
             speaker, decision = choose_interrupting_agent(
                 agents=participants,
-                config=config,
+                experiment=experiment,
                 round_spec=round_spec,
                 transcript=_public_transcript([*transcript, *statements]),
                 turn_number=turn_index + 1,
@@ -240,7 +269,7 @@ def _run_group_round(
         elif round_spec.mode == "discussion":
             decisions = _score_agents(
                 agents=participants,
-                config=config,
+                experiment=experiment,
                 round_spec=round_spec,
                 transcript=_public_transcript([*transcript, *statements]),
                 turn_number=turn_index + 1,
@@ -260,7 +289,7 @@ def _run_group_round(
                 turn_index=turn_index,
             ):
                 thought = _call_private_thought(
-                    config=config,
+                    experiment=experiment,
                     round_spec=round_spec,
                     agent=speaker,
                     transcript=_public_transcript([*transcript, *statements]),
@@ -275,7 +304,7 @@ def _run_group_round(
                 statements.append(thought)
                 continue
             if _should_cut_in(
-                config=config,
+                experiment=experiment,
                 decision=decision,
                 transcript=_public_transcript([*transcript, *statements]),
                 turn_index=turn_index,
@@ -285,7 +314,7 @@ def _run_group_round(
             decision = None
         statement_decision = decision if event_type == "interrupt" or round_spec.mode == "interruptions" else None
         statement = _call_agent(
-            config=config,
+            experiment=experiment,
             round_spec=round_spec,
             agent=speaker,
             transcript=_public_transcript([*transcript, *statements]),
@@ -315,7 +344,7 @@ def _run_group_round(
         goal_tracker.update(
             statement=statement,
             agents=participants,
-            config=config,
+            experiment=experiment,
             client=client,
             model=model,
             transcript=_public_transcript([*transcript, *statements, statement]),
@@ -355,7 +384,7 @@ def _run_group_round(
 def _score_agents(
     *,
     agents: list[AgentPersona],
-    config: CrewConfig,
+    experiment: ExperimentConfig,
     round_spec: RoundSpec,
     transcript: list[Statement],
     turn_number: int,
@@ -364,7 +393,7 @@ def _score_agents(
     return [
         classifier.score(
             agent=agent,
-            config=config,
+            experiment=experiment,
             round_spec=round_spec,
             transcript=transcript,
             turn_number=turn_number,
@@ -427,7 +456,7 @@ def _should_stay_quiet(
 
 def _should_cut_in(
     *,
-    config: CrewConfig,
+    experiment: ExperimentConfig,
     decision: InterruptionDecision,
     transcript: list[Statement],
     turn_index: int,
@@ -436,7 +465,7 @@ def _should_cut_in(
         return False
     min_public_turns = max(
         1,
-        int(_number(config.topic.variables.get("min_public_turns_before_interruptions"), 3)),
+        int(_number(experiment.task.variables.get("min_public_turns_before_interruptions"), 3)),
     )
     if len(transcript) < min_public_turns:
         return False
@@ -491,7 +520,7 @@ def _number(value: Any, default: float) -> float:
 
 def _call_agent(
     *,
-    config: CrewConfig,
+    experiment: ExperimentConfig,
     round_spec: RoundSpec,
     agent: AgentPersona,
     transcript: list[Statement],
@@ -507,7 +536,7 @@ def _call_agent(
 ) -> Statement:
     memory = private_memory or {}
     context = build_context(
-        config=config,
+        experiment=experiment,
         round_spec=round_spec,
         transcript=transcript,
         agent=agent,
@@ -518,7 +547,7 @@ def _call_agent(
             **(extra or {}),
         },
     )
-    system_prompt = build_agent_system_prompt(config, agent)
+    system_prompt = build_agent_system_prompt(experiment, agent)
     user_prompt = render_template(round_spec.prompt, context)
     _emit(
         event_callback,
@@ -589,7 +618,7 @@ def _call_agent(
 
 def _call_private_thought(
     *,
-    config: CrewConfig,
+    experiment: ExperimentConfig,
     round_spec: RoundSpec,
     agent: AgentPersona,
     transcript: list[Statement],
@@ -602,7 +631,7 @@ def _call_private_thought(
     goal_tracker: "GoalTracker | None" = None,
 ) -> Statement:
     context = build_context(
-        config=config,
+        experiment=experiment,
         round_spec=round_spec,
         transcript=transcript,
         agent=agent,
@@ -615,7 +644,7 @@ def _call_private_thought(
             **((goal_tracker or GoalTracker.empty()).visible_prompt_context()),
         },
     )
-    system_prompt = build_agent_system_prompt(config, agent)
+    system_prompt = build_agent_system_prompt(experiment, agent)
     user_prompt = render_template(
         "You are {agent_name}. You decide not to speak right now. "
         "Write one short private thought that will inform your next spoken turn. "
@@ -682,7 +711,7 @@ def _call_private_thought(
 
 def _call_recorder(
     *,
-    config: CrewConfig,
+    experiment: ExperimentConfig,
     round_spec: RoundSpec,
     transcript: list[Statement],
     client: ModelClient,
@@ -695,7 +724,7 @@ def _call_recorder(
     memory = private_memory or {}
     goal = goal_tracker or GoalTracker.empty()
     context = build_context(
-        config=config,
+        experiment=experiment,
         round_spec=round_spec,
         transcript=transcript,
         extra={
@@ -707,14 +736,15 @@ def _call_recorder(
             **goal.visible_prompt_context(),
         },
     )
+    output_contract = context.get("output_contract", "")
     system_prompt = "\n\n".join(
         part
         for part in [
-            config.harness.shared_instructions,
+            experiment.process.shared_instructions,
             round_spec.speaker_prompt,
-            config.harness.output_contract,
+            output_contract,
         ]
-        if part.strip()
+        if str(part or "").strip()
     )
     user_prompt = render_template(round_spec.prompt, context)
     _emit(
@@ -824,12 +854,12 @@ class GoalTracker:
     public_turns: int = 0
 
     @classmethod
-    def create(cls, *, config: CrewConfig, agents: list[AgentPersona]) -> "GoalTracker":
-        variables = config.topic.variables
+    def create(cls, *, experiment: ExperimentConfig, agents: list[AgentPersona]) -> "GoalTracker":
+        variables = experiment.task.variables
         goal = str(
             variables.get(
                 "shared_goal",
-                config.topic.success_criteria,
+                experiment.task.success_criteria,
             )
         )
         threshold = _clamp_float(_number(variables.get("goal_alignment_threshold"), 0.84), 0.55, 0.98)
@@ -964,7 +994,7 @@ class GoalTracker:
         *,
         statement: Statement,
         agents: list[AgentPersona],
-        config: CrewConfig,
+        experiment: ExperimentConfig,
         client: ModelClient,
         model: str,
         transcript: list[Statement],
@@ -982,7 +1012,7 @@ class GoalTracker:
             agent_states = self._evaluate_agent_states_with_llm(
                 statement=statement,
                 agents=agents,
-                config=config,
+                experiment=experiment,
                 client=client,
                 model=model,
                 transcript=transcript,
@@ -1053,7 +1083,7 @@ class GoalTracker:
         *,
         statement: Statement,
         agents: list[AgentPersona],
-        config: CrewConfig,
+        experiment: ExperimentConfig,
         client: ModelClient,
         model: str,
         transcript: list[Statement],
@@ -1063,10 +1093,10 @@ class GoalTracker:
             len(agents),
             max(
                 1,
-                int(_number(config.topic.variables.get("idea_state_workers"), len(agents))),
+                int(_number(experiment.task.variables.get("idea_state_workers"), len(agents))),
             ),
         )
-        state_model = _idea_state_model(config=config, client=client, model=model)
+        state_model = _idea_state_model(experiment=experiment, client=client, model=model)
         states: dict[str, dict[str, Any]] = {}
         try:
             with ThreadPoolExecutor(max_workers=workers) as executor:
@@ -1074,7 +1104,7 @@ class GoalTracker:
                     executor.submit(
                         self._evaluate_one_agent_state,
                         agent=agent,
-                        config=config,
+                        experiment=experiment,
                         client=client,
                         model=state_model,
                         transcript=transcript,
@@ -1095,7 +1125,7 @@ class GoalTracker:
         self,
         *,
         agent: AgentPersona,
-        config: CrewConfig,
+        experiment: ExperimentConfig,
         client: ModelClient,
         model: str,
         transcript: list[Statement],
@@ -1105,7 +1135,7 @@ class GoalTracker:
         system_prompt = "\n\n".join(
             part
             for part in [
-                build_agent_system_prompt(config, agent),
+                build_agent_system_prompt(experiment, agent),
                 (
                     "You are not speaking to the group. You are updating this "
                     "agent's private state after a public turn. Return compact "
@@ -1180,8 +1210,8 @@ def _discussion_time_limit_seconds(variables: dict[str, Any]) -> int:
     return 20 * 60
 
 
-def _idea_state_model(*, config: CrewConfig, client: ModelClient, model: str) -> str:
-    configured = config.topic.variables.get("idea_state_model")
+def _idea_state_model(*, experiment: ExperimentConfig, client: ModelClient, model: str) -> str:
+    configured = experiment.task.variables.get("idea_state_model")
     if configured:
         return str(configured)
     if client.provider == "claude":

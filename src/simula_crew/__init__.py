@@ -1,38 +1,47 @@
 """SimulaCrew: personality-driven multi-agent deliberation harness."""
 
 from simula_crew.clients import DryRunClient, ModelClient, OpenAIClient, create_client
-from simula_crew.engine import run_crew
-from simula_crew.io import load_config, save_result
+from simula_crew.engine import run_experiment
+from simula_crew.io import (
+    format_conversation,
+    list_experiments,
+    load_experiment,
+    save_experiment_result,
+)
 from simula_crew.runtime import apply_runtime_inputs, parse_variable_assignments
 from simula_crew.schema import (
     AgentPersona,
     ConfigError,
-    CrewConfig,
-    CrewResult,
-    HarnessConfig,
+    ExperimentConfig,
+    ExperimentResult,
+    OutputFormat,
+    ProcessConfig,
     RoundResult,
     RoundSpec,
     Statement,
-    TopicConfig,
+    TaskConfig,
 )
 
 __all__ = [
     "AgentPersona",
     "ConfigError",
-    "CrewConfig",
-    "CrewResult",
     "DryRunClient",
-    "HarnessConfig",
+    "ExperimentConfig",
+    "ExperimentResult",
     "ModelClient",
     "OpenAIClient",
+    "OutputFormat",
+    "ProcessConfig",
     "RoundResult",
     "RoundSpec",
     "Statement",
-    "TopicConfig",
+    "TaskConfig",
     "apply_runtime_inputs",
     "create_client",
-    "load_config",
+    "format_conversation",
+    "list_experiments",
+    "load_experiment",
     "parse_variable_assignments",
-    "run_crew",
-    "save_result",
+    "run_experiment",
+    "save_experiment_result",
 ]

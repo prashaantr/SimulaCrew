@@ -40,56 +40,54 @@ BACKGROUND_COLUMNS = {
     "uploaded_documents": "Please upload any additional unstructed information that you think describes you and your interests/expertise (e.g., like a resume or CV).",
 }
 
-LIKERT_COLUMNS = {
-    "openness": [
-        "I enjoy being unique and different from others in many ways.",
-        "I generally solve problems creatively",
-        "I have an active imagination.",
-        "I would prefer complex to simple problems.",
-        "I really enjoy a task that involves coming up with new solutions to problems",
-    ],
-    "conscientiousness": [
-        "For me, it is very important to carry out the obligations placed on me",
-        "I do a thorough job.",
-        "-I tend to be lazy.",
-    ],
-    "extraversion": [
-        "I am outgoing, sociable.",
-        "-I am reserved.",
-    ],
-    "agreeableness": [
-        "The well-being of my coworkers is important to me.",
-        "I feel good when I cooperate with others.",
-        "I am generally trusting.",
-        "-I tend to find fault with others.",
-    ],
-    "assertiveness": [
-        "I often do “my own thing.”",
-        "I prefer to work without instructions from others",
-        "When faced with a difficult person problem, it is better to decide what to do yourself rather than follow the advice of others.",
-    ],
-    "skepticism": [
-        "I tend to find fault with others.",
-        "It's enough for me that something gets the job done; I don't care how or why it works.",
-    ],
-    "neuroticism": [
-        "I get nervous easily.",
-        "-I am relaxed, handle stress well.",
-    ],
-    "patience": [
-        "I will stay in a group if they need me, even when I'm not happy with the group.",
-        "-If the group is slowing me down, it is better to leave it and work alone.",
-    ],
-}
-
-LIKERT_VALUES = {
-    "strongly disagree": 1.0,
-    "disagree": 3.0,
-    "neutral": 5.0,
-    "neither agree nor disagree": 5.0,
-    "agree": 7.0,
-    "strongly agree": 9.0,
-}
+BUILDATHON_DEFAULT_TASK_PROMPT = (
+    "You are participating in the Gates/Wharton Build-a-thon on AI, jobs, labor, "
+    "organizations, and the economy. As a team, deliberate openly and decide what "
+    "project, product, research prototype, or tool you would build today.\n\n"
+    "Use only this shared hackpad project-idea menu as context. You may combine, "
+    "refine, or reject ideas, but do not introduce unrelated themes:\n"
+    "- Visualize the state of an applied economics research project: what is done, "
+    "what is missing, and what should happen next.\n"
+    "- Translate skills, jobs, and experience across taxonomies to reduce reliance "
+    "on proprietary black-box mappings.\n"
+    "- Connect higher education to graduates' labor-market outcomes using syllabi, "
+    "course content, and career/profile data.\n"
+    "- Train or release open LLMs or datasets based on job postings data for "
+    "research use.\n"
+    "- Build an open occupation-level or task-level demand-elasticity dataset/model "
+    "linking cost impacts and labor demand.\n"
+    "- Simulate divide-and-conquer work: agents with different characteristics "
+    "complete realistic task steps, then evaluate whether isolated work recombines "
+    "into a good final output.\n"
+    "- Build a harness for sampling realistic tasks, deploying agents, and observing "
+    "how they subdivide, allocate, and coordinate work.\n"
+    "- Build a front-end conversation analysis tool for human-AI conversations, "
+    "prompt coaching, communication-pattern detection, or concerning-pattern flags.\n"
+    "- Build a prompt annotation tool that suggests how to make a user's prompt "
+    "sharper.\n"
+    "- Build a reverse task generator: start from skills or characteristics and "
+    "generate relevant tasks or jobs.\n"
+    "- Model supply-side skill-complement dynamics for healthy jobs, organizations, "
+    "or economies.\n"
+    "- Build and backtest a multi-factor labor displacement model using demand "
+    "elasticity, adaptability, firm adoption, exposure, and recent labor data.\n"
+    "- Build a New Work Tracker that detects novel task language emerging in job "
+    "postings and tracks first appearances by occupation.\n"
+    "- Build a job-description rewriter and bias measurement tool that emphasizes "
+    "skills and experience over degrees, explains each change, and compares old/new "
+    "ads using synthetic resume pools and pass-rate shifts.\n"
+    "- Model augmentation-versus-automation scenarios in archetypal firms or "
+    "industries with different roles, org structures, and AI adoption maturity.\n"
+    "- Estimate the cost of performing the same task bundle with human, AI/agentic, "
+    "or hybrid systems under different compute and labor prices.\n"
+    "- Improve, automate, or add to jobsdata.ai.\n"
+    "- Study people's anxieties and perceptions about AI's impact on their own "
+    "careers, and how those beliefs shape career-transition behavior.\n\n"
+    "Do not assume any known real team project or observed build-a-thon outcome. "
+    "The goal is to predict which project this team would naturally choose from "
+    "this idea space, and how they would shape it, using the survey-derived "
+    "evidence about its members."
+)
 
 
 @dataclass(frozen=True)
@@ -126,84 +124,125 @@ def agents_from_survey_rows(
     return agents
 
 
-def build_survey_crew_config(
+def build_survey_experiment_bundle(
     agents: list[AgentPersona],
     *,
-    name: str = "survey_team",
-    topic_prompt: str = "Deliberate as a team and produce the best final artifact for the task.",
+    name: str = "survey-team",
+    task_prompt: str = BUILDATHON_DEFAULT_TASK_PROMPT,
     description: str = "Survey-derived open-ended SimulaCrew team.",
 ) -> dict[str, Any]:
-    return {
+    """Build a four-file experiment bundle from survey-derived agents.
+
+    Returns a dict with keys 'experiment', 'task', 'process', 'agents'. The
+    'experiment' value references the others by relative filename, suitable for
+    writing out as experiment.yaml + task.json + process.json + agents.json.
+    """
+    task = {
+        "title": "Build-a-thon Project Simulation",
+        "prompt": task_prompt,
+        "target_user": "the simulation runner",
+        "success_criteria": (
+            "predict the concrete build-a-thon project this team would likely choose "
+            "after open-ended deliberation, weighting the members' personal and "
+            "professional backgrounds more heavily than generic task appeal"
+        ),
+        "output_format": {
+            "type": "markdown",
+            "description": (
+                "Final synthesis must describe the team's predicted build-a-thon project. "
+                "Include the main artifact, rationale, rejected alternatives, unresolved "
+                "dissent, risks, immediate next steps, and why this specific team's "
+                "backgrounds, skills, interests, and values make the project plausible."
+            ),
+            "required_sections": [
+                "artifact",
+                "rationale",
+                "risks",
+                "next steps",
+            ],
+        },
+        "variables": {
+            "time_budget": "20 minutes",
+            "discussion_time_limit_minutes": 20,
+            "decision_pressure": (
+                "The team is trying to converge on a project they could build today, "
+                "but personal fit should matter more than generic hackathon strategy."
+            ),
+            "shared_goal": (
+                "Converge on one concrete build-a-thon project that this exact team "
+                "would plausibly choose from its members' backgrounds."
+            ),
+            "default_goal_alignment_start": 0.42,
+            "goal_alignment_threshold": 0.86,
+            "goal_alignment_min_turns": 8,
+            "goal_alignment_evaluator": "deterministic",
+            "goal_alignment_step_self": 0.055,
+            "goal_alignment_step_listener": 0.025,
+            "goal_alignment_interrupt_factor": 0.65,
+            "private_thinking_workers": min(max(len(agents), 1), 4),
+        },
+    }
+    process = {
+        "shared_instructions": (
+            "You are part of a realistic working group. Your persona comes from "
+            "survey-derived evidence, including demographic context, professional "
+            "background, stated interests, collaboration preferences, and optional "
+            "document evidence. Use those details as the primary decision lens; the "
+            "task prompt is the shared arena, not the agent's whole identity. When "
+            "generic task strategy conflicts with personal background, let the "
+            "survey-derived background dominate. Do not make unsupported stereotyped "
+            "inferences. Speak naturally and keep turns concise."
+        ),
+        "character_prompt_template": (
+            "survey-derived character prompt for {agent_name}:\n\n"
+            "Base behavior:\n{agent_base_prompt}\n\n"
+            "Backstory and demographic/professional context:\n{agent_backstory}\n\n"
+            "Past experience / document evidence:\n{agent_history}\n\n"
+            "Skills:\n{agent_skills}\n\n"
+            "Interests:\n{agent_interests}\n\n"
+            "Knowledge they can draw from:\n{agent_knowledge}\n\n"
+            "Speaking style:\n{agent_speaking_style}\n\n"
+            "Survey questionnaire responses:\n{agent_personality}\n\n"
+            "Goals:\n{agent_goals}\n\n"
+            "Constraints:\n{agent_constraints}\n\n"
+            "Use the survey and document evidence to decide what this person notices, "
+            "where they are credible, what they may push for, when they speak, and how "
+            "they collaborate. Weight this person's background, values, skills, and "
+            "stated interests more heavily than the task description itself. Do not "
+            "recite the survey mechanically."
+        ),
+        "interaction_rules": [
+            "Start with independent reasoning before seeing peer arguments.",
+            "During group chat, make one move per turn: ask, answer, challenge, clarify, concede, or propose.",
+            "Draw naturally on professional background, skills, interests, values, and document evidence.",
+            "Prefer ideas that feel personally plausible for these exact members over ideas that merely fit the topic.",
+            "Avoid false consensus. If disagreement remains, preserve it.",
+        ],
+        "interruption_rules": [
+            "Interrupt when a hidden assumption would change the decision.",
+            "Interrupt when the group is converging too early.",
+            "Interrupt when a proposal is vague enough that it cannot be tested.",
+            "Do not interrupt merely to restate your preference.",
+        ],
+        "rounds": _default_rounds(),
+    }
+    agents_payload = {"agents": [_agent_to_config(agent) for agent in agents]}
+    experiment = {
         "name": name,
         "description": description,
         "metadata": {
             "source": "survey-ingestion",
             "agent_count": len(agents),
         },
-        "topic": {
-            "title": "Survey-Derived Team Simulation",
-            "prompt": topic_prompt,
-            "target_user": "the simulation runner",
-            "success_criteria": "produce a concrete final artifact that reflects the team's likely deliberation",
-            "variables": {
-                "time_budget": "20 minutes",
-                "discussion_time_limit_minutes": 20,
-                "decision_pressure": "The team is trying to converge on a useful output today.",
-                "shared_goal": "Converge on one concrete final deliverable for the task.",
-                "default_goal_alignment_start": 0.42,
-                "goal_alignment_threshold": 0.86,
-                "goal_alignment_min_turns": 8,
-                "goal_alignment_evaluator": "deterministic",
-                "goal_alignment_step_self": 0.055,
-                "goal_alignment_step_listener": 0.025,
-                "goal_alignment_interrupt_factor": 0.65,
-                "private_thinking_workers": min(max(len(agents), 1), 4),
-            },
-        },
-        "harness": {
-            "shared_instructions": (
-                "You are part of a realistic working group. Your persona comes from "
-                "survey-derived evidence, including demographic context, professional "
-                "background, stated interests, collaboration preferences, and optional "
-                "document evidence. Use those details as grounded context; do not make "
-                "unsupported stereotyped inferences. Speak naturally and keep turns concise."
-            ),
-            "character_prompt_template": (
-                "survey-derived character prompt for {agent_name}:\n\n"
-                "Base behavior:\n{agent_base_prompt}\n\n"
-                "Backstory and demographic/professional context:\n{agent_backstory}\n\n"
-                "Past experience / document evidence:\n{agent_history}\n\n"
-                "Skills:\n{agent_skills}\n\n"
-                "Interests:\n{agent_interests}\n\n"
-                "Knowledge they can draw from:\n{agent_knowledge}\n\n"
-                "Speaking style:\n{agent_speaking_style}\n\n"
-                "Personality questionnaire fields:\n{agent_personality}\n\n"
-                "Goals:\n{agent_goals}\n\n"
-                "Constraints:\n{agent_constraints}\n\n"
-                "Use the survey and document evidence to decide what this person notices, "
-                "where they are credible, what they may push for, when they speak, and how "
-                "they collaborate. Do not recite the survey mechanically."
-            ),
-            "interaction_rules": [
-                "Start with independent reasoning before seeing peer arguments.",
-                "During group chat, make one move per turn: ask, answer, challenge, clarify, concede, or propose.",
-                "Draw naturally on professional background, skills, interests, values, and document evidence.",
-                "Avoid false consensus. If disagreement remains, preserve it.",
-            ],
-            "interruption_rules": [
-                "Interrupt when a hidden assumption would change the decision.",
-                "Interrupt when the group is converging too early.",
-                "Interrupt when a proposal is vague enough that it cannot be tested.",
-                "Do not interrupt merely to restate your preference.",
-            ],
-            "output_contract": (
-                "Final synthesis must describe the team's predicted final deliverable. "
-                "Include the main artifact, rationale, rejected alternatives, unresolved "
-                "dissent, risks, and immediate next steps."
-            ),
-        },
-        "agents": [_agent_to_config(agent) for agent in agents],
-        "rounds": _default_rounds(),
+        "task": "task.json",
+        "process": "process.json",
+        "agents": "agents.json",
+    }
+    return {
+        "experiment": experiment,
+        "task": task,
+        "process": process,
+        "agents": agents_payload,
     }
 
 
@@ -216,7 +255,7 @@ def _agent_from_row(
 ) -> AgentPersona:
     demographics = _field_values(row, DEMOGRAPHIC_COLUMNS)
     background = _field_values(row, BACKGROUND_COLUMNS)
-    personality = _personality_from_row(row)
+    questionnaire = _questionnaire_from_row(row)
     skills = _split_phrases(background.get("skills", ""))
     interests = _compact_list([background.get("data_sources", ""), background.get("motivation", "")])
     knowledge = _compact_list(
@@ -244,9 +283,9 @@ def _agent_from_row(
         id=agent_id,
         name=name,
         base_prompt=base_prompt,
-        personality=personality,
+        personality=questionnaire,
         backstory=backstory,
-        speaking_style=_speaking_style(personality),
+        speaking_style="",
         knowledge=knowledge,
         skills=skills,
         interests=interests,
@@ -258,7 +297,7 @@ def _agent_from_row(
                 f"Hopes: {background['hopes']}" if background.get("hopes") else "",
             ]
         ),
-        constraints=_constraints(personality),
+        constraints=[],
     )
 
 
@@ -293,54 +332,18 @@ def _field_values(row: dict[str, str], columns: dict[str, str]) -> dict[str, str
     }
 
 
-def _personality_from_row(row: dict[str, str]) -> dict[str, float]:
-    personality: dict[str, float] = {}
-    for trait, columns in LIKERT_COLUMNS.items():
-        values: list[float] = []
-        for column in columns:
-            reverse = column.startswith("-")
-            actual_column = column[1:] if reverse else column
-            score = _likert_score(row.get(actual_column, ""))
-            if score is None:
-                continue
-            values.append(10.0 - score if reverse else score)
-        if values:
-            personality[trait] = round(sum(values) / len(values), 2)
-    personality.setdefault("openness", 5.0)
-    personality.setdefault("conscientiousness", 5.0)
-    personality.setdefault("extraversion", 5.0)
-    personality.setdefault("agreeableness", 5.0)
-    personality.setdefault("assertiveness", 5.0)
-    personality.setdefault("skepticism", 5.0)
-    personality.setdefault("neuroticism", 5.0)
-    personality.setdefault("urgency", 5.0)
-    personality.setdefault("patience", 5.0)
-    personality["interruptiveness"] = round(
-        (personality["assertiveness"] + personality["skepticism"] + (10.0 - personality["patience"])) / 3,
-        2,
-    )
-    personality["disagreement_sensitivity"] = round(
-        (personality["skepticism"] + (10.0 - personality["agreeableness"]) + personality["conscientiousness"]) / 3,
-        2,
-    )
-    personality["goal_alignment_start"] = round(
-        min(0.7, max(0.25, (personality["agreeableness"] + personality["conscientiousness"]) / 25)),
-        2,
-    )
-    return personality
-
-
-def _likert_score(value: str) -> float | None:
-    normalized = value.strip().lower()
-    if not normalized:
-        return None
-    if normalized in LIKERT_VALUES:
-        return LIKERT_VALUES[normalized]
-    try:
-        number = float(normalized)
-    except ValueError:
-        return None
-    return max(1.0, min(9.0, number))
+def _questionnaire_from_row(row: dict[str, str]) -> dict[str, str]:
+    non_question_columns = {
+        "Timestamp",
+        *NAME_COLUMNS,
+        *DEMOGRAPHIC_COLUMNS.values(),
+        *BACKGROUND_COLUMNS.values(),
+    }
+    return {
+        column: value
+        for column, value in row.items()
+        if column not in non_question_columns and value.strip()
+    }
 
 
 def _base_prompt(
@@ -373,28 +376,6 @@ def _backstory(*, background: dict[str, str], demographics: dict[str, str]) -> s
         f"Education/background: {background.get('background', '')}" if background.get("background") else "",
     ]
     return "\n".join(part for part in parts if part)
-
-
-def _speaking_style(personality: dict[str, float]) -> str:
-    fragments: list[str] = []
-    fragments.append("more direct" if personality["assertiveness"] >= 6.5 else "more tentative")
-    fragments.append("sociable" if personality["extraversion"] >= 6.5 else "reserved")
-    fragments.append("detail-oriented" if personality["conscientiousness"] >= 6.5 else "flexible")
-    fragments.append("collaborative" if personality["agreeableness"] >= 6.5 else "willing to challenge")
-    return ", ".join(fragments)
-
-
-def _constraints(personality: dict[str, float]) -> list[str]:
-    constraints: list[str] = []
-    if personality["assertiveness"] >= 7:
-        constraints.append("may push strongly for their own framing")
-    if personality["extraversion"] <= 4:
-        constraints.append("may wait to speak unless the point feels important")
-    if personality["skepticism"] >= 7:
-        constraints.append("may focus on failure modes and assumptions")
-    if personality["agreeableness"] >= 7:
-        constraints.append("may smooth over disagreement unless prompted to preserve dissent")
-    return constraints or ["respond from the survey evidence without overclaiming"]
 
 
 def _document_summary(documents: list[DocumentText]) -> str:
@@ -475,8 +456,10 @@ def _default_rounds() -> list[dict[str, Any]]:
                 "Topic: {topic_prompt}\n\nTarget user: {target_user}\n"
                 "Success criteria: {success_criteria}\nTime budget: {time_budget}\n\n"
                 "As {agent_name}, quietly read the task and give your initial take as "
-                "two or three plain spoken sentences. Draw on your survey-derived "
-                "background and document evidence. No headings or bullets."
+                "two or three plain spoken sentences. Treat your survey-derived "
+                "background, skills, values, interests, and document evidence as the "
+                "primary source of what you notice and want. The task is only the "
+                "shared prompt. No headings or bullets."
             ),
         },
         {
@@ -490,17 +473,18 @@ def _default_rounds() -> list[dict[str, Any]]:
                 "You are {current_speaker}. Turn {turn_number}; {turns_remaining} "
                 "turn slots remain. Discussion hard limit: {discussion_time_limit}.\n\n"
                 "Topic: {topic_prompt}\nShared objective: {alignment_goal}\n"
-                "Your private current alignment with the objective: {goal_alignment}\n"
-                "Private group alignment snapshot: {goal_alignment_summary}\n"
                 "Turn type for your behavior only: {event_type}\n"
                 "Private interruption tendency if relevant: {interruption_score}/10\n"
                 "Private reason if relevant: {interruption_rationale}\n"
                 "Private notes from times you stayed quiet:\n{private_memory}\n\n"
                 "Transcript:\n{transcript}\n\n"
                 "Talk like a normal person in a small group trying to produce a useful "
-                "deliverable. Reply to the last useful point, ask a question, push back, "
-                "concede, or propose a merge. Do not write the words interrupt, score, "
-                "tendency, rationale, alignment, or threshold. One or two plain sentences."
+                "deliverable. Before choosing what to say, anchor in your personal "
+                "survey evidence: your background, skills, interests, values, and "
+                "work history should shape the proposal more than generic task fit. "
+                "Reply to the last useful point, ask a question, push back, concede, "
+                "or propose a merge. Do not write the words interrupt, score, tendency, "
+                "rationale, alignment, or threshold. One or two plain sentences."
             ),
         },
         {
@@ -516,10 +500,11 @@ def _default_rounds() -> list[dict[str, Any]]:
             ),
             "prompt": (
                 "Topic: {topic_prompt}\nShared objective: {alignment_goal}\n"
-                "Final alignment state: {goal_alignment_summary}\n"
                 "Private notes that informed but did not appear in chat:\n{private_memory}\n\n"
                 "Full transcript:\n{transcript}\n\n{output_contract}\n\n"
-                "Write the final artifact. Do not include the raw transcript."
+                "Write the final artifact. Explain why this particular team, given "
+                "its members' backgrounds, skills, interests, values, and stated "
+                "motivations, would choose this project. Do not include the raw transcript."
             ),
         },
     ]

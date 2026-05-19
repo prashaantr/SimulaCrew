@@ -1,0 +1,13 @@
+name: simulacra
+description: >-
+  A research-backed personality-driven debate preset for testing SimulaCrew's
+  agent spawning, interruption scoring, and final synthesis.
+metadata:
+  protocols:
+    - nominal-group independent ideation
+    - multi-agent debate
+    - personality-based interruption scoring
+    - neutral synthesis with preserved dissent
+task: ../tasks/simulacra.json
+process: ../processes/simulacra.json
+agents: ../agents/simulacra.json
