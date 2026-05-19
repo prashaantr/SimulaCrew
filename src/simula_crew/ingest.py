@@ -514,8 +514,6 @@ def _default_rounds() -> list[dict[str, Any]]:
                 "You are {current_speaker}. Turn {turn_number}; {turns_remaining} "
                 "turn slots remain. Discussion hard limit: {discussion_time_limit}.\n\n"
                 "Topic: {topic_prompt}\nShared objective: {alignment_goal}\n"
-                "Your private current alignment with the objective: {goal_alignment}\n"
-                "Private group alignment snapshot: {goal_alignment_summary}\n"
                 "Turn type for your behavior only: {event_type}\n"
                 "Private interruption tendency if relevant: {interruption_score}/10\n"
                 "Private reason if relevant: {interruption_rationale}\n"
@@ -540,7 +538,6 @@ def _default_rounds() -> list[dict[str, Any]]:
             ),
             "prompt": (
                 "Topic: {topic_prompt}\nShared objective: {alignment_goal}\n"
-                "Final alignment state: {goal_alignment_summary}\n"
                 "Private notes that informed but did not appear in chat:\n{private_memory}\n\n"
                 "Full transcript:\n{transcript}\n\n{output_contract}\n\n"
                 "Write the final artifact. Do not include the raw transcript."

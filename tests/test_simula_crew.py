@@ -112,6 +112,25 @@ class ConfigTests(unittest.TestCase):
                 ],
             )
 
+    def test_legacy_one_file_configs_fail_with_migration_message(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "legacy.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "name": "legacy",
+                        "topic": {"prompt": "Old topic shape"},
+                        "harness": {},
+                        "rounds": [],
+                        "agents": [{"id": "a", "base_prompt": "old"}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(ConfigError, "legacy one-file configs"):
+                load_experiment(path)
+
 
 class OutputFormatTests(unittest.TestCase):
     def test_markdown_required_sections(self) -> None:
@@ -279,6 +298,47 @@ class SurveyIngestionTests(unittest.TestCase):
         self.assertEqual(experiment.process.rounds[1].mode, "discussion")
         self.assertIn("survey-derived", experiment.process.character_prompt_template)
 
+    def test_survey_experiment_bundle_dry_runs(self) -> None:
+        agents = agents_from_survey_rows(
+            [
+                {
+                    "Name": "Ada Example",
+                    "Occupation": "Economist",
+                    "How would you describe the skill set that you contribute to the team?": "Research design",
+                },
+                {
+                    "Name": "Grace Example",
+                    "Occupation": "Product lead",
+                    "How would you describe the skill set that you contribute to the team?": "Product strategy",
+                },
+            ]
+        )
+        bundle = build_survey_experiment_bundle(
+            agents,
+            name="survey-team",
+            task_prompt="Design an AI labor-market research prototype.",
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            (base / "task.json").write_text(json.dumps(bundle["task"]), encoding="utf-8")
+            (base / "process.json").write_text(json.dumps(bundle["process"]), encoding="utf-8")
+            (base / "agents.json").write_text(json.dumps(bundle["agents"]), encoding="utf-8")
+            import yaml as _yaml
+
+            (base / "experiment.yaml").write_text(_yaml.safe_dump(bundle["experiment"]), encoding="utf-8")
+            experiment = load_experiment(base / "experiment.yaml")
+
+        result = run_experiment(
+            experiment=experiment,
+            client=DryRunClient(),
+            model="dry-run-model",
+            max_agents=2,
+        )
+
+        self.assertEqual(result.experiment_name, "survey-team")
+        self.assertEqual(result.format_check["valid"], True)
+
     def test_ingest_survey_cli_writes_loadable_bundle(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             csv_path = Path(temp_dir) / "responses.csv"
@@ -373,7 +433,7 @@ class EngineTests(unittest.TestCase):
             self.assertTrue(all(isinstance(note, str) for note in notes))
         self.assertIsInstance(result.task_result, str)
         self.assertEqual(result.format_check["format_type"], "markdown")
-        self.assertIn("valid", result.format_check)
+        self.assertEqual(result.format_check["valid"], True)
 
         event_types = [event_type for event_type, _ in events]
         self.assertIn("round_start", event_types)

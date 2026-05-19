@@ -36,6 +36,12 @@ def load_experiment(path: str | Path) -> ExperimentConfig:
     data = _load_structured(experiment_path)
     if not isinstance(data, dict):
         raise ConfigError(f"{experiment_path}: experiment file must be an object.")
+    if _looks_like_legacy_config(data):
+        raise ConfigError(
+            f"{experiment_path}: legacy one-file configs are no longer supported. "
+            "Use an experiment file that references separate task, process, and agents "
+            "objects, or regenerate survey configs with `simulacrew ingest-survey --output-dir ...`."
+        )
 
     try:
         name = _required_text(data, "name", "experiment")
@@ -160,6 +166,15 @@ def _resolve_agents_ref(value: Any, base_path: Path) -> list[dict[str, Any]]:
             return agents
         raise ConfigError(f"{target}: agents file must be a list or an object with 'agents'.")
     raise ConfigError("experiment.agents must be a path or an inline list.")
+
+
+def _looks_like_legacy_config(data: dict[str, Any]) -> bool:
+    return (
+        "agents" in data
+        and isinstance(data.get("agents"), list)
+        and ("topic" in data or "harness" in data or "rounds" in data)
+        and ("task" not in data or "process" not in data)
+    )
 
 
 def _load_structured(path: Path) -> Any:
