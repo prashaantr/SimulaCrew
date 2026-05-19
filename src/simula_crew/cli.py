@@ -13,6 +13,7 @@ from simula_crew.clients import create_client
 from simula_crew.engine import run_experiment
 from simula_crew.google_drive import load_google_sheet_rows
 from simula_crew.ingest import (
+    BUILDATHON_DEFAULT_TASK_PROMPT,
     DocumentText,
     agents_from_survey_rows,
     build_survey_experiment_bundle,
@@ -72,7 +73,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ingest_parser.add_argument(
         "--task-prompt",
-        default="Deliberate as a team and produce the best final artifact for the task.",
+        default=BUILDATHON_DEFAULT_TASK_PROMPT,
     )
     ingest_parser.add_argument("--name", default="survey-team")
     ingest_parser.add_argument(
@@ -103,7 +104,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     google_ingest_parser.add_argument(
         "--task-prompt",
-        default="Deliberate as a team and produce the best final artifact for the task.",
+        default=BUILDATHON_DEFAULT_TASK_PROMPT,
     )
     google_ingest_parser.add_argument("--name", default="survey-team")
     google_ingest_parser.add_argument(

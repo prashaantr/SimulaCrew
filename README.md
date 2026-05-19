@@ -170,9 +170,13 @@ Generate a crew config from a local Google Forms CSV export:
 
 ```bash
 simulacrew ingest-survey responses.csv \
-  --output-dir configs/generated/buildathon-team \
-  --task-prompt "Design a prototype for studying how AI is reshaping jobs and the economy."
+  --output-dir configs/generated/buildathon-team
 ```
+
+The default survey-ingestion task asks the agents to deliberate on the shared
+Gates/Wharton Build-a-thon challenge around AI, jobs, labor, organizations, and
+the economy. It intentionally does not include observed team project choices;
+override `--task-prompt` only when you want a different counterfactual task.
 
 If you have resume/CV text extracted locally, put files in a directory named by
 the generated person id, for example `daniel-rock.txt`, then include them:

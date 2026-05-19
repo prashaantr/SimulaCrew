@@ -40,56 +40,19 @@ BACKGROUND_COLUMNS = {
     "uploaded_documents": "Please upload any additional unstructed information that you think describes you and your interests/expertise (e.g., like a resume or CV).",
 }
 
-LIKERT_COLUMNS = {
-    "openness": [
-        "I enjoy being unique and different from others in many ways.",
-        "I generally solve problems creatively",
-        "I have an active imagination.",
-        "I would prefer complex to simple problems.",
-        "I really enjoy a task that involves coming up with new solutions to problems",
-    ],
-    "conscientiousness": [
-        "For me, it is very important to carry out the obligations placed on me",
-        "I do a thorough job.",
-        "-I tend to be lazy.",
-    ],
-    "extraversion": [
-        "I am outgoing, sociable.",
-        "-I am reserved.",
-    ],
-    "agreeableness": [
-        "The well-being of my coworkers is important to me.",
-        "I feel good when I cooperate with others.",
-        "I am generally trusting.",
-        "-I tend to find fault with others.",
-    ],
-    "assertiveness": [
-        "I often do “my own thing.”",
-        "I prefer to work without instructions from others",
-        "When faced with a difficult person problem, it is better to decide what to do yourself rather than follow the advice of others.",
-    ],
-    "skepticism": [
-        "I tend to find fault with others.",
-        "It's enough for me that something gets the job done; I don't care how or why it works.",
-    ],
-    "neuroticism": [
-        "I get nervous easily.",
-        "-I am relaxed, handle stress well.",
-    ],
-    "patience": [
-        "I will stay in a group if they need me, even when I'm not happy with the group.",
-        "-If the group is slowing me down, it is better to leave it and work alone.",
-    ],
-}
-
-LIKERT_VALUES = {
-    "strongly disagree": 1.0,
-    "disagree": 3.0,
-    "neutral": 5.0,
-    "neither agree nor disagree": 5.0,
-    "agree": 7.0,
-    "strongly agree": 9.0,
-}
+BUILDATHON_DEFAULT_TASK_PROMPT = (
+    "You are participating in the Gates/Wharton Build-a-thon on AI, jobs, labor, "
+    "organizations, and the economy. As a team, deliberate openly and decide what "
+    "project, product, research prototype, or tool you would build today.\n\n"
+    "Use the broad hackpad brainstorming themes as shared context: digital team "
+    "twins and team simulacra; AI's impact on work, tasks, labor markets, handoffs, "
+    "meetings, and organizational collaboration; tools or datasets that help teams "
+    "study or build around these questions; and ways to evaluate whether a simulated "
+    "team output resembles a real team's output.\n\n"
+    "Do not assume any known real team project or observed build-a-thon outcome. "
+    "The goal is to predict what this team would naturally come up with from the "
+    "shared challenge and the survey-derived evidence about its members."
+)
 
 
 @dataclass(frozen=True)
@@ -130,7 +93,7 @@ def build_survey_experiment_bundle(
     agents: list[AgentPersona],
     *,
     name: str = "survey-team",
-    task_prompt: str = "Deliberate as a team and produce the best final artifact for the task.",
+    task_prompt: str = BUILDATHON_DEFAULT_TASK_PROMPT,
     description: str = "Survey-derived open-ended SimulaCrew team.",
 ) -> dict[str, Any]:
     """Build a four-file experiment bundle from survey-derived agents.
@@ -140,14 +103,17 @@ def build_survey_experiment_bundle(
     writing out as experiment.yaml + task.json + process.json + agents.json.
     """
     task = {
-        "title": "Survey-Derived Team Simulation",
+        "title": "Build-a-thon Project Simulation",
         "prompt": task_prompt,
         "target_user": "the simulation runner",
-        "success_criteria": "produce a concrete final artifact that reflects the team's likely deliberation",
+        "success_criteria": (
+            "predict the concrete build-a-thon project this team would likely choose "
+            "after open-ended deliberation"
+        ),
         "output_format": {
             "type": "markdown",
             "description": (
-                "Final synthesis must describe the team's predicted final deliverable. "
+                "Final synthesis must describe the team's predicted build-a-thon project. "
                 "Include the main artifact, rationale, rejected alternatives, unresolved "
                 "dissent, risks, and immediate next steps."
             ),
@@ -161,8 +127,8 @@ def build_survey_experiment_bundle(
         "variables": {
             "time_budget": "20 minutes",
             "discussion_time_limit_minutes": 20,
-            "decision_pressure": "The team is trying to converge on a useful output today.",
-            "shared_goal": "Converge on one concrete final deliverable for the task.",
+            "decision_pressure": "The team is trying to converge on a project they could build today.",
+            "shared_goal": "Converge on one concrete build-a-thon project.",
             "default_goal_alignment_start": 0.42,
             "goal_alignment_threshold": 0.86,
             "goal_alignment_min_turns": 8,
@@ -190,7 +156,7 @@ def build_survey_experiment_bundle(
             "Interests:\n{agent_interests}\n\n"
             "Knowledge they can draw from:\n{agent_knowledge}\n\n"
             "Speaking style:\n{agent_speaking_style}\n\n"
-            "Personality questionnaire fields:\n{agent_personality}\n\n"
+            "Survey questionnaire responses:\n{agent_personality}\n\n"
             "Goals:\n{agent_goals}\n\n"
             "Constraints:\n{agent_constraints}\n\n"
             "Use the survey and document evidence to decide what this person notices, "
@@ -240,7 +206,7 @@ def _agent_from_row(
 ) -> AgentPersona:
     demographics = _field_values(row, DEMOGRAPHIC_COLUMNS)
     background = _field_values(row, BACKGROUND_COLUMNS)
-    personality = _personality_from_row(row)
+    questionnaire = _questionnaire_from_row(row)
     skills = _split_phrases(background.get("skills", ""))
     interests = _compact_list([background.get("data_sources", ""), background.get("motivation", "")])
     knowledge = _compact_list(
@@ -268,9 +234,9 @@ def _agent_from_row(
         id=agent_id,
         name=name,
         base_prompt=base_prompt,
-        personality=personality,
+        personality=questionnaire,
         backstory=backstory,
-        speaking_style=_speaking_style(personality),
+        speaking_style="",
         knowledge=knowledge,
         skills=skills,
         interests=interests,
@@ -282,7 +248,7 @@ def _agent_from_row(
                 f"Hopes: {background['hopes']}" if background.get("hopes") else "",
             ]
         ),
-        constraints=_constraints(personality),
+        constraints=[],
     )
 
 
@@ -317,54 +283,18 @@ def _field_values(row: dict[str, str], columns: dict[str, str]) -> dict[str, str
     }
 
 
-def _personality_from_row(row: dict[str, str]) -> dict[str, float]:
-    personality: dict[str, float] = {}
-    for trait, columns in LIKERT_COLUMNS.items():
-        values: list[float] = []
-        for column in columns:
-            reverse = column.startswith("-")
-            actual_column = column[1:] if reverse else column
-            score = _likert_score(row.get(actual_column, ""))
-            if score is None:
-                continue
-            values.append(10.0 - score if reverse else score)
-        if values:
-            personality[trait] = round(sum(values) / len(values), 2)
-    personality.setdefault("openness", 5.0)
-    personality.setdefault("conscientiousness", 5.0)
-    personality.setdefault("extraversion", 5.0)
-    personality.setdefault("agreeableness", 5.0)
-    personality.setdefault("assertiveness", 5.0)
-    personality.setdefault("skepticism", 5.0)
-    personality.setdefault("neuroticism", 5.0)
-    personality.setdefault("urgency", 5.0)
-    personality.setdefault("patience", 5.0)
-    personality["interruptiveness"] = round(
-        (personality["assertiveness"] + personality["skepticism"] + (10.0 - personality["patience"])) / 3,
-        2,
-    )
-    personality["disagreement_sensitivity"] = round(
-        (personality["skepticism"] + (10.0 - personality["agreeableness"]) + personality["conscientiousness"]) / 3,
-        2,
-    )
-    personality["goal_alignment_start"] = round(
-        min(0.7, max(0.25, (personality["agreeableness"] + personality["conscientiousness"]) / 25)),
-        2,
-    )
-    return personality
-
-
-def _likert_score(value: str) -> float | None:
-    normalized = value.strip().lower()
-    if not normalized:
-        return None
-    if normalized in LIKERT_VALUES:
-        return LIKERT_VALUES[normalized]
-    try:
-        number = float(normalized)
-    except ValueError:
-        return None
-    return max(1.0, min(9.0, number))
+def _questionnaire_from_row(row: dict[str, str]) -> dict[str, str]:
+    non_question_columns = {
+        "Timestamp",
+        *NAME_COLUMNS,
+        *DEMOGRAPHIC_COLUMNS.values(),
+        *BACKGROUND_COLUMNS.values(),
+    }
+    return {
+        column: value
+        for column, value in row.items()
+        if column not in non_question_columns and value.strip()
+    }
 
 
 def _base_prompt(
@@ -397,28 +327,6 @@ def _backstory(*, background: dict[str, str], demographics: dict[str, str]) -> s
         f"Education/background: {background.get('background', '')}" if background.get("background") else "",
     ]
     return "\n".join(part for part in parts if part)
-
-
-def _speaking_style(personality: dict[str, float]) -> str:
-    fragments: list[str] = []
-    fragments.append("more direct" if personality["assertiveness"] >= 6.5 else "more tentative")
-    fragments.append("sociable" if personality["extraversion"] >= 6.5 else "reserved")
-    fragments.append("detail-oriented" if personality["conscientiousness"] >= 6.5 else "flexible")
-    fragments.append("collaborative" if personality["agreeableness"] >= 6.5 else "willing to challenge")
-    return ", ".join(fragments)
-
-
-def _constraints(personality: dict[str, float]) -> list[str]:
-    constraints: list[str] = []
-    if personality["assertiveness"] >= 7:
-        constraints.append("may push strongly for their own framing")
-    if personality["extraversion"] <= 4:
-        constraints.append("may wait to speak unless the point feels important")
-    if personality["skepticism"] >= 7:
-        constraints.append("may focus on failure modes and assumptions")
-    if personality["agreeableness"] >= 7:
-        constraints.append("may smooth over disagreement unless prompted to preserve dissent")
-    return constraints or ["respond from the survey evidence without overclaiming"]
 
 
 def _document_summary(documents: list[DocumentText]) -> str:

@@ -10,6 +10,7 @@ from simula_crew.cli import _default_model, main
 from simula_crew.engine import run_experiment
 from simula_crew.google_drive import google_sheet_export_url
 from simula_crew.ingest import (
+    BUILDATHON_DEFAULT_TASK_PROMPT,
     DocumentText,
     agents_from_survey_rows,
     build_survey_experiment_bundle,
@@ -243,9 +244,25 @@ class SurveyIngestionTests(unittest.TestCase):
         self.assertIn("Causal inference", agent.skills)
         self.assertIn("Job postings and worker accounts", agent.interests)
         self.assertIn("resume.txt", agent.history[0])
-        self.assertGreater(agent.personality["openness"], 5)
-        self.assertGreater(agent.personality["conscientiousness"], 5)
-        self.assertLess(agent.personality["extraversion"], 6)
+        self.assertEqual(
+            agent.personality["I enjoy being unique and different from others in many ways."],
+            "Agree",
+        )
+        self.assertEqual(agent.personality["I am outgoing, sociable."], "Disagree")
+        self.assertNotIn("openness", agent.personality)
+        self.assertNotIn("conscientiousness", agent.personality)
+        self.assertNotIn("extraversion", agent.personality)
+        self.assertNotIn("agreeableness", agent.personality)
+        self.assertNotIn("assertiveness", agent.personality)
+        self.assertNotIn("skepticism", agent.personality)
+        self.assertNotIn("neuroticism", agent.personality)
+        self.assertNotIn("patience", agent.personality)
+        self.assertNotIn("urgency", agent.personality)
+        self.assertNotIn("interruptiveness", agent.personality)
+        self.assertNotIn("disagreement_sensitivity", agent.personality)
+        self.assertNotIn("goal_alignment_start", agent.personality)
+        self.assertEqual(agent.speaking_style, "")
+        self.assertEqual(agent.constraints, [])
         self.assertIn("broad access", agent.goals[0])
 
     def test_survey_csv_loader_skips_empty_rows(self) -> None:
@@ -297,6 +314,16 @@ class SurveyIngestionTests(unittest.TestCase):
         self.assertEqual(len(experiment.agents), 2)
         self.assertEqual(experiment.process.rounds[1].mode, "discussion")
         self.assertIn("survey-derived", experiment.process.character_prompt_template)
+        self.assertIn("Survey questionnaire responses", experiment.process.character_prompt_template)
+
+    def test_survey_experiment_default_task_is_general_buildathon_context(self) -> None:
+        agents = agents_from_survey_rows([{"Name": "Ada Example"}])
+        bundle = build_survey_experiment_bundle(agents)
+
+        self.assertEqual(bundle["task"]["prompt"], BUILDATHON_DEFAULT_TASK_PROMPT)
+        self.assertIn("Gates/Wharton Build-a-thon", bundle["task"]["prompt"])
+        self.assertIn("Do not assume any known real team project", bundle["task"]["prompt"])
+        self.assertNotIn("role", bundle["task"]["prompt"].lower())
 
     def test_survey_experiment_bundle_dry_runs(self) -> None:
         agents = agents_from_survey_rows(
