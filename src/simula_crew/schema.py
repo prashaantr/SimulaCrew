@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import Any, Literal, cast
 
 
-RoundMode = Literal["private", "debate", "interruptions", "synthesis"]
+RoundMode = Literal["private", "debate", "discussion", "interruptions", "synthesis"]
 TranscriptVisibility = Literal["named", "anonymous", "hidden"]
 TurnStrategy = Literal["round_robin", "interruption_priority"]
 
@@ -81,6 +81,9 @@ class AgentPersona:
     name: str
     base_prompt: str
     personality: dict[str, Any] = field(default_factory=dict)
+    backstory: str = ""
+    speaking_style: str = ""
+    knowledge: list[str] = field(default_factory=list)
     goals: list[str] = field(default_factory=list)
     constraints: list[str] = field(default_factory=list)
 
@@ -93,6 +96,9 @@ class AgentPersona:
             name=_optional_text(data, "name", agent_id, "agents[]"),
             base_prompt=_required_text(data, "base_prompt", f"agents[{agent_id}]"),
             personality=_optional_mapping(data, "personality", f"agents[{agent_id}]"),
+            backstory=_optional_text(data, "backstory", "", f"agents[{agent_id}]"),
+            speaking_style=_optional_text(data, "speaking_style", "", f"agents[{agent_id}]"),
+            knowledge=_optional_text_list(data, "knowledge", f"agents[{agent_id}]"),
             goals=_optional_text_list(data, "goals", f"agents[{agent_id}]"),
             constraints=_optional_text_list(
                 data,
@@ -123,9 +129,9 @@ class RoundSpec:
         path = f"rounds[{round_id}]"
 
         mode = str(data.get("mode", "debate"))
-        if mode not in {"private", "debate", "interruptions", "synthesis"}:
+        if mode not in {"private", "debate", "discussion", "interruptions", "synthesis"}:
             raise ConfigError(
-                f"{path}.mode must be one of: private, debate, interruptions, synthesis"
+                f"{path}.mode must be one of: private, debate, discussion, interruptions, synthesis"
             )
 
         transcript_visibility = str(data.get("transcript_visibility", "named"))

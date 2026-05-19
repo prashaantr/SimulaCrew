@@ -89,6 +89,9 @@ def agent_values(agent: AgentPersona) -> dict[str, Any]:
         "agent_name": agent.name,
         "agent_base_prompt": agent.base_prompt,
         "agent_personality": format_mapping(agent.personality),
+        "agent_backstory": agent.backstory or "None supplied.",
+        "agent_speaking_style": agent.speaking_style or "None supplied.",
+        "agent_knowledge": format_list(agent.knowledge),
         "agent_goals": format_list(agent.goals),
         "agent_constraints": format_list(agent.constraints),
     }
@@ -128,6 +131,7 @@ def build_context(
             config.harness.interruption_rules,
         ),
         "output_contract": config.harness.output_contract,
+        "private_memory": "No private notes.",
     }
     values.update(config.topic.variables)
     if agent is not None:

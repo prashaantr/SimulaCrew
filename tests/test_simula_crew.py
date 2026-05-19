@@ -5,7 +5,7 @@ from pathlib import Path
 
 from simula_crew.clients import DryRunClient
 from simula_crew.engine import run_crew
-from simula_crew.io import load_config, save_result
+from simula_crew.io import load_config, format_conversation, save_result
 from simula_crew.prompts import PromptRenderError, format_transcript, render_template
 from simula_crew.runtime import apply_runtime_inputs, parse_variable_assignments
 from simula_crew.scoring import (
@@ -77,21 +77,31 @@ class EngineTests(unittest.TestCase):
             config=config,
             client=DryRunClient(),
             model="dry-run-model",
-            max_agents=2,
+            max_agents=4,
             event_callback=lambda event_type, payload: events.append((event_type, payload)),
         )
         self.assertEqual(result.config_name, "simulacra")
-        interruption_round = next(
+        group_round = next(
             round_result
             for round_result in result.rounds
-            if round_result.id == "interruption_window"
+            if round_result.id == "group_chat"
         )
-        self.assertEqual(len(interruption_round.statements), 6)
+        self.assertEqual(len(group_round.statements), 12)
         self.assertTrue(
             any(
                 statement.metadata.get("classifier_interruption_score") is not None
-                for statement in interruption_round.statements
+                for statement in group_round.statements
             )
+        )
+        self.assertTrue(
+            any(statement.event_type == "interrupt" for statement in group_round.statements)
+        )
+        self.assertGreater(
+            len({statement.agent_id for statement in group_round.statements}),
+            1,
+        )
+        self.assertTrue(
+            all("System prompt focus" not in statement.content for statement in group_round.statements)
         )
         event_types = [event_type for event_type, _ in events]
         self.assertIn("round_start", event_types)
@@ -100,11 +110,15 @@ class EngineTests(unittest.TestCase):
         self.assertGreater(event_types.index("agent_start"), event_types.index("round_start"))
 
         with tempfile.TemporaryDirectory() as output_dir:
-            json_path, markdown_path = save_result(result, output_dir)
+            json_path, conversation_path = save_result(result, output_dir)
             self.assertTrue(json_path.exists())
-            self.assertTrue(markdown_path.exists())
+            self.assertTrue(conversation_path.exists())
+            self.assertEqual(conversation_path.suffix, ".txt")
             payload = json.loads(json_path.read_text(encoding="utf-8"))
             self.assertEqual(payload["provider"], "dry-run")
+            conversation = format_conversation(result)
+            self.assertIn("SIMULACREW CONVERSATION", conversation)
+            self.assertIn("[DISCUSSION] Group Chat", conversation)
 
     def test_deterministic_interruption_score_ranks_assertive_skeptic(self) -> None:
         config = load_config(REPO_ROOT / "configs" / "simulacra.json")
@@ -118,7 +132,7 @@ class EngineTests(unittest.TestCase):
             .score(
                 agent=mara,
                 config=config,
-                round_spec=config.rounds[2],
+                round_spec=config.rounds[1],
                 transcript=[Statement("x", "X", "r", 1, "debate", "claim")],
                 turn_number=2,
             )

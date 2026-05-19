@@ -27,16 +27,16 @@ def color(text: str, style: str) -> str:
 
 
 def banner(title: str, subtitle: str = "") -> str:
-    width = max(64, min(96, len(title) + 8))
-    top = "/" + "=" * (width - 2) + "\\"
-    middle = "|" + title.center(width - 2) + "|"
+    width = max(64, min(96, max(len(title), len(subtitle)) + 8))
+    top = "█" * width
+    middle = "█" + title.center(width - 2) + "█"
     parts = [
         color(top, Style.CYAN),
         color(middle, Style.BOLD + Style.CYAN),
     ]
     if subtitle:
-        parts.append(color("|" + subtitle.center(width - 2) + "|", Style.DIM))
-    parts.append(color("\\" + "=" * (width - 2) + "/", Style.CYAN))
+        parts.append(color("█" + subtitle.center(width - 2) + "█", Style.DIM))
+    parts.append(color(top, Style.CYAN))
     return "\n".join(parts)
 
 

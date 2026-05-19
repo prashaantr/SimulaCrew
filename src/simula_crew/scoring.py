@@ -32,7 +32,7 @@ class InterruptionClassifier(Protocol):
 
 
 class DeterministicInterruptionClassifier:
-    """Personality-derived interruption scorer for repeatable tests and dry runs."""
+    """Personality-derived interruption propensity for repeatable tests and dry runs."""
 
     source = "deterministic"
 
@@ -48,8 +48,8 @@ class DeterministicInterruptionClassifier:
         score = deterministic_interruption_score(agent, transcript)
         should_interrupt = score >= 6.5 and bool(transcript)
         rationale = (
-            "Computed from assertiveness, skepticism, urgency, extraversion, "
-            "agreeableness, conscientiousness, and recent speaking frequency."
+            "Current interruption propensity from personality, contestation pressure, "
+            "and recent speaking history."
         )
         return InterruptionDecision(
             agent_id=agent.id,
@@ -95,8 +95,10 @@ class LLMInterruptionClassifier:
             )
 
         system_prompt = (
-            "You classify whether an agent should interrupt a live group "
-            "deliberation. Return compact JSON only. Do not write prose."
+            "You classify an agent's current propensity to interrupt a live "
+            "working-group deliberation. Interruption means cutting in because "
+            "the current direction is wrong, vague, premature, or missing an "
+            "important merge. Return compact JSON only. Do not write prose."
         )
         user_prompt = f"""
 Agent:
@@ -121,10 +123,15 @@ Interruption rules:
 Transcript:
 {format_transcript(transcript, visibility="named")}
 
-Classify whether this agent should interrupt right now.
+Classify how strongly this agent would interrupt right now. Consider:
+- the agent's interruption-related personality traits
+- whether the transcript contains a claim they would contest
+- whether they spoke recently and should yield
+- whether interrupting would move the group forward
+
 Return JSON with:
 {{
-  "score": number from 0 to 10,
+  "score": number from 0 to 10, where 0 means will not interrupt and 10 means almost certainly interrupts,
   "should_interrupt": boolean,
   "rationale": "one sentence"
 }}
@@ -176,21 +183,44 @@ def deterministic_interruption_score(
 ) -> float:
     personality = agent.personality
     transcript = transcript or []
-    recent_turns = transcript[-4:]
+    recent_turns = transcript[-6:]
     recent_speaks = sum(1 for statement in recent_turns if statement.agent_id == agent.id)
-    silence_bonus = 0.6 if recent_speaks == 0 and transcript else 0.0
-    dominance_penalty = recent_speaks * 0.8
+    last_speaker_penalty = 2.6 if transcript and transcript[-1].agent_id == agent.id else 0.0
+    silence_bonus = 0.9 if recent_speaks == 0 and transcript else 0.0
+    repeated_speaker_penalty = recent_speaks * 1.15
+    contestation_pressure = 0.7 if transcript else 0.0
+
+    assertiveness = _number(personality.get("assertiveness"), 5.0)
+    skepticism = _number(personality.get("skepticism"), 5.0)
+    urgency = _number(personality.get("urgency"), 5.0)
+    extraversion = _number(personality.get("extraversion"), 5.0)
+    agreeableness = _number(personality.get("agreeableness"), 5.0)
+    conscientiousness = _number(personality.get("conscientiousness"), 5.0)
+    interruptiveness = _number(personality.get("interruptiveness"), assertiveness)
+    disagreement_sensitivity = _number(
+        personality.get("disagreement_sensitivity"),
+        skepticism,
+    )
+    patience = _number(
+        personality.get("patience"),
+        (agreeableness + conscientiousness) / 2,
+    )
 
     score = (
-        _number(personality.get("assertiveness"), 3.0) * 0.7
-        + _number(personality.get("skepticism"), 3.0) * 0.8
-        + _number(personality.get("urgency"), 3.0) * 0.55
-        + _number(personality.get("extraversion"), 3.0) * 0.35
-        + _number(personality.get("neuroticism"), 3.0) * 0.15
-        - _number(personality.get("agreeableness"), 3.0) * 0.45
-        - _number(personality.get("conscientiousness"), 3.0) * 0.1
+        5.0
+        + (assertiveness - 5.0) * 0.45
+        + (skepticism - 5.0) * 0.35
+        + (urgency - 5.0) * 0.35
+        + (extraversion - 5.0) * 0.15
+        + (interruptiveness - 5.0) * 0.75
+        + (disagreement_sensitivity - 5.0) * 0.5
+        - (agreeableness - 5.0) * 0.35
+        - (conscientiousness - 5.0) * 0.15
+        - (patience - 5.0) * 0.55
+        + contestation_pressure
         + silence_bonus
-        - dominance_penalty
+        - repeated_speaker_penalty
+        - last_speaker_penalty
     )
     return round(_clamp(score, 0.0, 10.0), 2)
 
@@ -216,9 +246,22 @@ def choose_interrupting_agent(
     ]
     decision_by_id = {decision.agent_id: decision for decision in decisions}
     interrupting = [decision for decision in decisions if decision.should_interrupt]
-    chosen_decision = max(interrupting or decisions, key=lambda decision: decision.score)
+    ranked = sorted(interrupting or decisions, key=lambda decision: decision.score, reverse=True)
+    chosen_decision = ranked[0]
+    if transcript and chosen_decision.agent_id == transcript[-1].agent_id:
+        chosen_decision = _near_tie_alternative(ranked, chosen_decision)
     chosen_agent = next(agent for agent in agents if agent.id == chosen_decision.agent_id)
     return chosen_agent, decision_by_id[chosen_agent.id]
+
+
+def _near_tie_alternative(
+    ranked: list[InterruptionDecision],
+    leader: InterruptionDecision,
+) -> InterruptionDecision:
+    for candidate in ranked[1:]:
+        if candidate.score >= leader.score - 1.25:
+            return candidate
+    return leader
 
 
 def _number(value: Any, default: float) -> float:

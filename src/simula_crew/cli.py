@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import argparse
-from textwrap import dedent
+import sys
+import threading
+import time
+from datetime import datetime
 from pathlib import Path
+from textwrap import dedent, wrap as wrap_text
 
 from simula_crew.clients import create_client
 from simula_crew.engine import run_crew
@@ -82,6 +86,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-live",
         action="store_true",
         help="Disable live per-agent output and print a summary at the end.",
+    )
+    run_parser.add_argument(
+        "--show-interruption-notes",
+        action="store_true",
+        help="Show internal interruption scores and classifier rationale in the live transcript.",
     )
 
     return parser
@@ -181,7 +190,9 @@ def _run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
         event_callback = None
         if not args.quiet and not args.no_live:
             _print_run_header(config.name, config.topic.title, args.provider, model)
-            event_callback = _live_event_printer()
+            event_callback = _live_event_printer(
+                show_interruption_notes=args.show_interruption_notes,
+            )
         result = run_crew(
             config=config,
             client=client,
@@ -196,20 +207,20 @@ def _run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
                 "interruption_classifier": args.interruption_classifier,
             },
         )
-        json_path, markdown_path = save_result(result, args.output_dir)
+        json_path, conversation_path = save_result(result, args.output_dir)
     except (ConfigError, RuntimeError, ValueError) as exc:
         parser.exit(2, f"error: {exc}\n")
 
     if args.quiet:
         print(json_path)
-        print(markdown_path)
+        print(conversation_path)
         return 0
 
     if args.no_live:
         _print_run_summary(result)
     print(section("Artifacts"))
     print(key_value("JSON", str(json_path)))
-    print(key_value("Markdown", str(markdown_path)))
+    print(key_value("Conversation", str(conversation_path)))
     return 0
 
 
@@ -228,7 +239,7 @@ def _print_run_header(
                 ("config", config_name),
                 ("provider", provider),
                 ("model", model),
-                ("mode", "live per-agent output"),
+                ("mode", "█ live per-agent output"),
             ],
             width=88,
         ),
@@ -236,37 +247,166 @@ def _print_run_header(
     )
 
 
-def _live_event_printer():
+def _live_event_printer(*, show_interruption_notes: bool = False):
+    speaker_styles: dict[str, str] = {}
+    indicator: TypingIndicator | None = None
+
     def handle(event_type: str, payload: dict) -> None:
+        nonlocal indicator
         if event_type == "round_start":
+            if indicator:
+                indicator.stop()
+                indicator = None
             title = payload["round_title"]
             mode = str(payload["round_mode"]).upper()
-            print(section(f"█ {mode} :: {title}"), flush=True)
+            print(_conversation_phase(mode, title), flush=True)
             return
 
         if event_type == "agent_start":
+            style = _style_for_speaker(
+                str(payload["agent_id"]),
+                speaker_styles,
+            )
             agent = payload["agent_name"]
             turn = payload["turn_number"]
             action = payload["event_type"]
-            score = payload.get("interruption_score")
-            score_text = f" | interruption score: {score}" if score is not None else ""
-            print(
-                color(f"▓ asking {agent} [{action} turn {turn}]{score_text}", Style.BOLD + Style.YELLOW),
-                flush=True,
+            score = (
+                payload.get("interruption_score")
+                if action == "interrupt" and show_interruption_notes
+                else None
             )
+            label, verb = _action_label(action)
+            score_text = _score_text(score)
+            message = f"{agent} {verb} (turn {turn}){score_text}"
+            if sys.stdout.isatty():
+                if indicator:
+                    indicator.stop()
+                indicator = TypingIndicator(message)
+                indicator.start()
             rationale = payload.get("interruption_rationale")
-            if rationale:
-                print(color(f"░ {rationale}", Style.DIM), flush=True)
+            if rationale and show_interruption_notes:
+                if indicator:
+                    indicator.stop()
+                    indicator = None
+                print(color(f"░ note: {rationale}", Style.DIM), flush=True)
             return
 
         if event_type == "statement":
+            if indicator:
+                indicator.stop()
+                indicator = None
             statement = payload["statement"]
-            marker = "█" if statement.event_type == "interrupt" else "▓"
-            title = f"{marker} {statement.agent_name} replied"
-            print(panel(title, statement.content.strip(), width=88), flush=True)
+            style = _style_for_speaker(statement.agent_id, speaker_styles)
+            print(
+                _conversation_statement(
+                    statement,
+                    style,
+                    show_interruption_notes=show_interruption_notes,
+                ),
+                flush=True,
+            )
 
     return handle
 
+
+def _conversation_phase(mode: str, title: str) -> str:
+    line = "█" * 88
+    phase = "GROUP CHAT" if mode == "DISCUSSION" else mode
+    return "\n".join(
+        [
+            "",
+            color(line, Style.DIM),
+            color(f"█ {phase} / {title}", Style.BOLD + Style.MAGENTA),
+            color(line, Style.DIM),
+        ]
+    )
+
+
+def _conversation_statement(
+    statement,
+    speaker_style: str,
+    *,
+    show_interruption_notes: bool = False,
+) -> str:
+    label, _ = _action_label(statement.event_type)
+    time_text = datetime.now().strftime("%H:%M:%S")
+    score = (
+        statement.metadata.get("interruption_score")
+        if statement.event_type == "interrupt" and show_interruption_notes
+        else None
+    )
+    score_text = _score_text(score)
+    marker = "█" if statement.event_type == "interrupt" else "▓"
+    header = (
+        color(f"{marker} {statement.agent_name}", speaker_style + Style.BOLD)
+        + color(f"  {label.lower()}  {time_text}{score_text}", Style.DIM)
+    )
+    lines = [header]
+    for paragraph in statement.content.strip().splitlines() or [""]:
+        wrapped = wrap_text(paragraph, width=82) if paragraph else [""]
+        for line in wrapped:
+            lines.append(color("░ ", speaker_style) + line)
+    return "\n".join(lines) + "\n"
+
+
+def _action_label(action: str) -> tuple[str, str]:
+    if action == "private":
+        return "thinking", "thinking"
+    if action == "thought":
+        return "stays quiet", "thinking"
+    if action == "interrupt":
+        return "cuts in", "cuts in"
+    if action == "synthesis":
+        return "wraps up", "wrapping up"
+    return "says", "typing"
+
+
+def _score_text(score) -> str:
+    if score is None:
+        return ""
+    try:
+        return f" | interrupt {float(score):.1f}/10"
+    except (TypeError, ValueError):
+        return f" | interrupt {score}/10"
+
+
+def _style_for_speaker(agent_id: str, speaker_styles: dict[str, str]) -> str:
+    if agent_id not in speaker_styles:
+        palette = [
+            Style.CYAN,
+            Style.GREEN,
+            Style.YELLOW,
+            Style.MAGENTA,
+            Style.BLUE,
+            Style.RED,
+        ]
+        speaker_styles[agent_id] = palette[len(speaker_styles) % len(palette)]
+    return speaker_styles[agent_id]
+
+
+class TypingIndicator:
+    def __init__(self, message: str) -> None:
+        self.message = message
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        self._thread.join(timeout=0.3)
+        sys.stdout.write("\r" + " " * 100 + "\r")
+        sys.stdout.flush()
+
+    def _run(self) -> None:
+        frames = ["░  ", "▒  ", "▓  ", "█  "]
+        index = 0
+        while not self._stop.is_set():
+            sys.stdout.write("\r" + color(f"{frames[index % len(frames)]} {self.message}", Style.DIM))
+            sys.stdout.flush()
+            index += 1
+            time.sleep(0.25)
 
 def _print_run_summary(result: CrewResult) -> None:
     print(logo())
@@ -299,3 +439,7 @@ def _print_run_summary(result: CrewResult) -> None:
             preview = " ".join(statement.content.split())[:180]
             print("  " + color(label, Style.BOLD))
             print("    " + wrap(preview, width=82))
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

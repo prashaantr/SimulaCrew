@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from typing import Any, Protocol
 
@@ -36,12 +37,22 @@ class DryRunClient:
         agent_name = metadata.get("agent_name", "Recorder")
         event_type = metadata.get("event_type", "statement")
         turn_number = metadata.get("turn_number", "?")
-        system_preview = " ".join(system_prompt.split())[:220]
-        prompt_preview = " ".join(user_prompt.split())[:320]
-        return (
-            f"Dry-run {event_type} from {agent_name} on turn {turn_number}.\n\n"
-            f"System prompt focus: {system_preview}\n\n"
-            f"User prompt focus: {prompt_preview}"
+
+        if event_type == "interruption_classification":
+            score = _dry_run_interruption_score(agent_name, turn_number)
+            return json.dumps(
+                {
+                    "score": score,
+                    "should_interrupt": score >= 6.5,
+                    "rationale": "Dry-run classifier: persona pressure plus turn rotation.",
+                }
+            )
+
+        return _dry_run_response(
+            agent_name=agent_name,
+            event_type=event_type,
+            turn_number=turn_number,
+            topic=_extract_topic(user_prompt),
         )
 
 
@@ -82,6 +93,128 @@ class OpenAIClient:
         if not content:
             raise RuntimeError("OpenAI returned an empty response.")
         return content
+
+
+def _extract_topic(user_prompt: str) -> str:
+    for line in user_prompt.splitlines():
+        if line.lower().startswith("topic:"):
+            return line.split(":", 1)[1].strip()
+    return "the prompt"
+
+
+def _dry_run_interruption_score(agent_name: str, turn_number: Any) -> float:
+    base_scores = {
+        "Mara": 8.0,
+        "Niko": 8.4,
+        "Sol": 5.8,
+        "June": 6.6,
+    }
+    try:
+        turn = int(turn_number)
+    except (TypeError, ValueError):
+        turn = 1
+    return round(max(0.0, min(10.0, base_scores.get(agent_name, 6.0) - (turn % 3) * 0.4)), 1)
+
+
+def _dry_run_response(
+    *,
+    agent_name: str,
+    event_type: str,
+    turn_number: Any,
+    topic: str,
+) -> str:
+    if event_type == "synthesis":
+        return (
+            "The group lands on the general harness first, with the moral deliberation "
+            "simulator as the first proof preset.\n"
+            "Niko still does not want to call it realistic until interruption scoring "
+            "and evaluation hooks are visible.\n"
+            "The next move is one CLI smoke test with two agents, then one Claude run."
+        )
+
+    private = {
+        "Mara": (
+            "I would start with the harness because every later simulator needs spawning, "
+            "turns, interruptions, and logs.\n"
+            "The risk is over-abstracting before anything works, so I want the smallest "
+            "runnable demo today."
+        ),
+        "Niko": (
+            "I only want the harness first if evaluation hooks are first-class.\n"
+            "Fake realism is worse than a simple scripted debate, so the group needs to "
+            "inspect why an agent cut in."
+        ),
+        "Sol": (
+            "I would use the harness as the spine and one domain preset as the test.\n"
+            "That keeps architecture and reality checks together, as long as the output "
+            "does not smooth away dissent."
+        ),
+        "June": (
+            "I want the CLI understandable first.\n"
+            "Users need to see agents thinking, chatting, and cutting in without digging "
+            "through too many knobs."
+        ),
+    }
+    if event_type == "private":
+        return private.get(agent_name, f"I would focus on {topic} and keep the first run small.")
+
+    debate = {
+        "Mara": [
+            "I would ship the harness first, but constrain it to one preset so it proves something today.",
+            "The preset can be moral deliberation, but the reusable part is spawning, turns, and logs.",
+            "So my consensus offer is: harness first, moral simulator as the first acceptance test.",
+        ],
+        "Niko": [
+            "I disagree with a bare harness. Add the inspection trail, or we cannot tell simulation from roleplay.",
+            "The minimum is an evaluation hook and a printed rationale for every interruption.",
+            "I can accept harness first if the first demo proves why an agent spoke when it did.",
+        ],
+        "Sol": [
+            "Those are compatible: harness first, moral deliberation as the first test case, and dissent preserved.",
+            "The consensus is not generic versus moral; it is reusable mechanics tested by one concrete domain.",
+            "Let's record the dissent as a quality bar, not a blocker.",
+        ],
+        "June": [
+            "The user-facing test is simple: can someone run the CLI, see the room talk, and understand why it decided?",
+            "I want the README to show exactly where personality prompts go and the one command to run.",
+            "Consensus only matters if the result is usable from the terminal.",
+        ],
+    }
+    interrupt = {
+        "Mara": [
+            "We are drifting. The answer is harness first, one preset, one runnable command.",
+            "Do not add another framework layer until the CLI run is clean.",
+        ],
+        "Niko": [
+            "Only if the interruption score and rationale are printed. Otherwise this is just confident chat.",
+            "The mechanism needs recent-speaker penalties, or one loud agent will dominate.",
+        ],
+        "Sol": [
+            "Name the consensus level, then keep the minority objection in the final answer.",
+            "Mara and Niko are aligned if evaluation is part of the first harness.",
+        ],
+        "June": [
+            "Make the transcript readable in the terminal, not buried in a giant Markdown file.",
+            "The user should see reading, talking, interrupting, and consensus as separate moments.",
+        ],
+    }
+    if event_type == "interrupt":
+        return _turn_choice(
+            interrupt.get(agent_name, ["Interrupt: this needs a clearer next step."]),
+            turn_number,
+        )
+    return _turn_choice(
+        debate.get(agent_name, [f"I think the group should decide a practical next step for {topic}."]),
+        turn_number,
+    )
+
+
+def _turn_choice(options: list[str], turn_number: Any) -> str:
+    try:
+        turn = int(turn_number)
+    except (TypeError, ValueError):
+        turn = 1
+    return options[(turn - 1) % len(options)]
 
 
 def create_client(provider: str) -> ModelClient:
