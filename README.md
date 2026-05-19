@@ -105,6 +105,32 @@ Run a no-API dry run:
 simulacrew run configs/simulacra.json
 ```
 
+This is called `dry-run` because it does not call Claude or OpenAI. It uses deterministic placeholder responses so you can test install, CLI rendering, file output, state updates, and stopping logic without spending API calls.
+
+Run a real Claude simulation:
+
+```bash
+simulacrew run configs/simulacra.json \
+  --provider claude \
+  --model sonnet \
+  --interruption-classifier llm \
+  --prompt "what project should we do for the Gates Foundation build-a-thon hackathon future of work?"
+```
+
+That command is not dry-run:
+
+```text
++-------------------------------+------------------------------------------------+
+| setting                       | what happens                                   |
++-------------------------------+------------------------------------------------+
+| --provider claude             | agent turns call Claude through the SDK        |
+| --model sonnet                | spoken agent turns use the Sonnet alias        |
+| --interruption-classifier llm | cut-in decisions use Claude                    |
+| idea_state_model: haiku       | buy-in/idea state updates use fast Haiku       |
+| no --provider                 | defaults to dry-run                            |
++-------------------------------+------------------------------------------------+
+```
+
 Generate a crew config from a local Google Forms CSV export:
 
 ```bash
@@ -280,12 +306,28 @@ The human running the CLI can see the independent thinking phase. The agents do 
 | persona                  | base prompt, history, skills, interests, traits     |
 | round                    | one phase of the run                                |
 | private round            | agents think independently before group chat        |
+| parallel thinking        | private round calls run concurrently                |
+| private thinking worker  | thread slot used for parallel private calls         |
 | private memory           | notes only the same agent can see later             |
 | public transcript        | messages agents actually said in the group chat     |
+| public turn              | a spoken group-chat message, not private thinking   |
 | group chat               | normal conversation where agents respond in turn    |
+| normal turn              | a non-interrupting "says" message                   |
+| protected opening        | early public turns where cut-ins are disabled       |
 | cut-in                   | an interruption rendered as "cuts in"               |
+| contestation pressure    | how strongly an agent wants to challenge direction  |
 | interruption score       | private estimate of how likely an agent is to cut in|
+| buy-in score             | how aligned each agent is with the emerging idea    |
+| current idea             | the idea the group appears to be converging on      |
+| agent idea view          | what one agent seems to think the current idea is   |
 | convergence              | internal estimate that agents are aligned on goal   |
+| agent state evaluator    | per-agent LLM call for idea view and buy-in         |
+| alignment evaluator      | state updater that checks whether buy-in is enough  |
+| fallback steps           | deterministic buy-in updates for dry-run/testing    |
+| discussion cap           | hard time limit before moving to PRD synthesis      |
+| show-interruption-notes  | CLI flag for classifier notes and agent idea views  |
+| model provider           | dry-run, Claude, or OpenAI backend                  |
+| Claude Haiku default     | default Claude model when --model is omitted        |
 | PRD recorder             | neutral final writer that turns discussion into PRD |
 | artifact                 | saved JSON and text output in runs/                 |
 +--------------------------+-----------------------------------------------------+
@@ -307,8 +349,9 @@ The human running the CLI can see the independent thinking phase. The agents do 
 +--------------------------------------------------------------------------------+
 | Agents see the public transcript only: messages that were actually spoken.      |
 | The engine chooses who speaks next from interruption pressure, recent silence,  |
-| and recent speaking history. A turn can become a normal "says", a "cuts in",   |
-| or a hidden "stays quiet" private note.                                        |
+| and recent speaking history. Early turns are protected so agents build on the   |
+| prior message before cut-ins begin. A turn can become a normal "says", a        |
+| "cuts in", or a hidden "stays quiet" private note.                             |
 +--------------------------------------------------------------------------------+
 
 +--------------------------------------------------------------------------------+
@@ -316,7 +359,7 @@ The human running the CLI can see the independent thinking phase. The agents do 
 +--------------------------------------------------------------------------------+
 | After public turns, the engine updates internal alignment toward the shared     |
 | goal. Live Claude runs can use an LLM evaluator; dry-run uses configured        |
-| fallback steps. This state is hidden unless --show-interruption-notes is used.  |
+| fallback steps. The CLI prints buy-in scores and the current idea after turns.  |
 +--------------------------------------------------------------------------------+
 
 +--------------------------------------------------------------------------------+
@@ -576,6 +619,234 @@ Internal interruption scores and classifier notes are hidden by default because 
 simulacrew run configs/simulacra.json --show-interruption-notes
 ```
 
+The normal CLI shows buy-in and current idea state after public group-chat turns. This state is for the human operator; it is not fed back into the speaking agents.
+
+```text
+  ┌─ room state ───────────────────────────────────────────────────────────────
+  │ buy-in
+  │   June      43%  █████░░░░░░░
+  │   Mara      56%  ███████░░░░░
+  │   Niko      37%  ████░░░░░░░░
+  │   Sol       45%  █████░░░░░░░
+  │
+  │ shared idea
+  │   voice-first job-skills matcher for displaced workers
+  │
+  │ agent idea views
+  │   Mara
+  │     voice-first job-skills matcher for informal workers
+  │   Niko
+  │     skills matcher, but only if job recommendations are grounded
+  └────────────────────────────────────────────────────────────────────────────
+```
+
+The CLI also prints each agent's evaluated view of what the idea is. This helps catch cases where agents appear to agree but are actually imagining different products.
+
+## How Agents Decide To Stay Quiet
+
+Staying quiet is a real action, not a missing turn. During group chat, the scheduler first chooses who has the strongest reason to respond. That agent can still decide not to speak if the current moment does not justify a public message.
+
+```text
++---------------------+       +---------------------+       +---------------------+
+| candidate speaker   | ----> | quiet probability   | ----> | speak or store note |
++---------------------+       +---------------------+       +---------------------+
+          |                             |
+          v                             v
+  interruption pressure          patience, low urgency,
+  recent transcript              lower assertiveness,
+  recent speaker history         lower extraversion
+```
+
+An agent will not stay quiet when:
+
+- it is the first group-chat turn,
+- the interruption classifier says it strongly needs to cut in,
+- its interruption score is high,
+- it was the last public speaker.
+
+If it does stay quiet, SimulaCrew asks the agent for one private thought. That thought is stored in the same agent's private memory and can shape its next spoken turn. Other agents cannot see it unless the agent later says it out loud.
+
+## How The Idea And Percentages Work
+
+SimulaCrew does not pick the idea by taking the last sentence someone said. The intended model is closer to a real group:
+
+```text
++------------------+       +------------------+       +------------------+
+| agent idea view  |       | buy-in score     |       | public transcript|
++------------------+       +------------------+       +------------------+
+| Mara's concept   |       | Mara: 0.56       |       | what was said    |
+| Niko's concept   | ----> | Niko: 0.37       | ----> | questions        |
+| Sol's concept    |       | Sol: 0.45        |       | objections       |
+| June's concept   |       | June: 0.43       |       | concessions      |
++------------------+       +------------------+       +------------------+
+          |                         |                         |
+          +-------------------------+-------------------------+
+                                    v
+                         +----------------------+
+                         | agent state evaluators|
+                         | update room state     |
+                         +----------+-----------+
+                                    |
+                                    v
+                         +----------------------+
+                         | shared current idea  |
+                         | PRD when aligned     |
+                         +----------------------+
+```
+
+Each agent has two pieces of internal state:
+
+- `agent idea view`: what that agent currently thinks the proposal is.
+- `buy-in score`: how bought in that agent is to moving forward with the shared goal and emerging idea.
+
+Think of the model as three layers:
+
+```text
++----------------------+---------------------------------------------------------+
+| layer                | meaning                                                 |
++----------------------+---------------------------------------------------------+
+| agent idea concept   | one agent's private understanding of the proposal       |
+| shared current idea  | the room-level best read derived from agent concepts    |
+| final PRD idea       | the idea written up after convergence or time limit     |
++----------------------+---------------------------------------------------------+
+```
+
+The concepts can differ. For example:
+
+```text
+Mara concept: voice-first job-skills matcher for informal workers
+Niko concept: skills matcher, but only if job recommendations are grounded
+Sol concept: mobility tool translating work history into reachable next roles
+June concept: simple demo where a worker speaks history and sees next steps
+```
+
+That is useful: the CLI can show when people sound aligned but are actually carrying different versions of the product in their heads.
+
+Important: this is observer state, not agent context. Speaking agents do not see `current_idea`, `agent_idea_view`, `agent_idea_views_summary`, `goal_alignment`, `goal_alignment_summary`, or the buy-in percentages. Those values are computed after public turns for CLI display, JSON metadata, and stopping logic.
+
+The CLI line:
+
+```text
+◇ buy-in  mara 56%  niko 37%  sol 45%  june 43%
+◇ idea    voice-first job-skills matcher for displaced workers
+```
+
+means:
+
+- Mara is 56% bought in to the current direction.
+- Niko is 37% bought in, so he is likely to keep contesting or asking for proof.
+- The `idea` line is the evaluator's current best read of the shared proposal in the room.
+
+The percentage is not a truth score and not a quality score. It means:
+
+```text
+0-25%    blocking or not bought in
+26-50%   interested but still contesting assumptions
+51-75%   leaning in, but still wants changes or evidence
+76-89%   mostly ready to proceed
+90-100%  ready to treat this as the PRD target
+```
+
+The default convergence threshold is `90%`, so the group only stops once every active agent is at or above that threshold after the minimum number of public turns.
+
+The normal room-state block includes each evaluated agent view:
+
+```text
+◇ agent idea views
+  mara: voice-first job-skills matcher for informal workers
+  niko: skills matcher, but only valid if job data is grounded
+  sol: worker mobility tool that translates experience into next roles
+  june: simple demo where a worker speaks history and sees next steps
+```
+
+The final idea is decided when the group reaches convergence:
+
+```text
+all agents buy-in >= goal_alignment_threshold
+AND public turns >= goal_alignment_min_turns
+```
+
+If the 20-minute discussion cap hits first, the recorder writes the PRD from the transcript and private notes, then preserves unresolved disagreement.
+
+### Live Claude Runs
+
+When running with Claude and `goal_alignment_evaluator: "llm"`, SimulaCrew runs one state evaluator per agent after each public turn. These state updates are parallel and use the configured fast model, which defaults to the Claude SDK `haiku` alias.
+
+Each agent state evaluator receives:
+
+- that agent's persona,
+- that agent's private notes,
+- that agent's previous idea view,
+- that agent's previous buy-in,
+- the latest public statement,
+- the public transcript,
+- the shared goal.
+
+Each evaluator returns compact JSON:
+
+```json
+{
+  "idea": "skills matcher needing grounded job data",
+  "buy_in": 0.37,
+  "rationale": "Niko sees a promising direction but is not convinced the job data is real enough."
+}
+```
+
+Those per-agent values update the CLI buy-in display, JSON metadata, and convergence check. They do not become the next turn's agent prompt. The shared `idea` line is derived from the agent idea views and buy-in scores. The full per-agent views are printed underneath it for the human operator.
+
+The live path works like this after every public group-chat message:
+
+```text
++--------------------+
+| public turn lands  |
++---------+----------+
+          |
+          v
++--------------------+   +--------------------+   +--------------------+
+| Mara state update  |   | Niko state update  |   | Sol/June updates   |
+| model: haiku       |   | model: haiku       |   | model: haiku       |
++---------+----------+   +---------+----------+   +---------+----------+
+          |                        |                        |
+          +------------------------+------------------------+
+                                   v
+                    +------------------------------+
+                    | update buy-in + idea views   |
+                    +---------------+--------------+
+                                    |
+                                    v
+                    +------------------------------+
+                    | print colored CLI state      |
+                    +------------------------------+
+```
+
+Each update is independent and can run in parallel because one agent's private buy-in calculation does not need another agent's private buy-in calculation.
+
+Configure this in `configs/simulacra.json`:
+
+```json
+{
+  "idea_state_model": "haiku",
+  "idea_state_workers": 4
+}
+```
+
+Anthropic's Claude Code/Agent SDK model configuration documents `haiku` as the fast Haiku alias. If Anthropic later publishes a specific full model ID you want, put that value in `idea_state_model`.
+
+### Dry-Run Mode
+
+Dry-run mode does not call an LLM evaluator. It uses deterministic fallback values so tests and demos can run without an API key:
+
+- the speaker's buy-in increases by `goal_alignment_step_self`,
+- listeners increase by `goal_alignment_step_listener`,
+- interruptions are damped by `goal_alignment_interrupt_factor`,
+- the speaker's idea view updates from its latest public statement,
+- listener idea views stay separate until their own turns update them,
+- the visible shared `idea` is derived from the highest buy-in agent view.
+
+Dry-run percentages are useful for testing the mechanics. For realistic idea tracking, use Claude with the LLM convergence evaluator.
+
+Dry-run is deliberately mechanical. It proves the CLI, state plumbing, stopping logic, and saved artifacts work without spending API calls. It is not meant to be a realistic judge of whether an idea is good.
+
 ## Convergence And The 20-Minute Cap
 
 The default task is:
@@ -590,13 +861,14 @@ This is configured in `configs/simulacra.json` under `topic.variables`:
 {
   "shared_goal": "Converge on one concrete hackathon project idea and then produce a useful PRD for building it.",
   "discussion_time_limit_minutes": 20,
-  "goal_alignment_threshold": 0.86,
+  "goal_alignment_threshold": 0.90,
   "goal_alignment_min_turns": 8,
   "goal_alignment_evaluator": "llm",
   "default_goal_alignment_start": 0.42,
   "goal_alignment_step_self": 0.055,
   "goal_alignment_step_listener": 0.025,
-  "goal_alignment_interrupt_factor": 0.65
+  "goal_alignment_interrupt_factor": 0.65,
+  "min_public_turns_before_interruptions": 3
 }
 ```
 
@@ -606,6 +878,8 @@ The discussion stops when either:
 - the 20-minute discussion cap is reached between turns.
 
 Convergence is not based on hard-coded words like "agree" or "risk." In live Claude runs, the LLM evaluator reads the transcript, personas, shared goal, and current state, then returns per-agent alignment as JSON. In dry-run mode, SimulaCrew uses the configured fallback step sizes so local tests can run without an API key.
+
+Cut-ins are delayed by `min_public_turns_before_interruptions` so the first few group-chat turns build on what was said before. After that, high-interruption personas can cut in when the classifier says there is enough contestation pressure.
 
 Per-agent starting alignment goes in `agents[].personality.goal_alignment_start`:
 
@@ -620,7 +894,7 @@ Per-agent starting alignment goes in `agents[].personality.goal_alignment_start`
 }
 ```
 
-The alignment state is written into the JSON run metadata for debugging. It is not printed in the normal CLI transcript unless you pass `--show-interruption-notes`.
+The alignment state is printed in the live CLI room-state block and written into JSON metadata. It is not shown to the agents. `--show-interruption-notes` adds classifier rationales and interruption scores for debugging.
 
 ## Where Personalities Go
 
@@ -736,8 +1010,9 @@ The final round is a recorder round. It receives:
 
 - the full public transcript,
 - the hidden private notes that agents kept when they stayed quiet,
-- the final convergence state,
 - the configured `harness.output_contract`.
+
+It does not receive the hidden shared idea, per-agent idea views, or buy-in percentages. The recorder has to write from the discussion record, which keeps the hidden evaluator from becoming an extra invisible participant.
 
 The default output contract asks for:
 

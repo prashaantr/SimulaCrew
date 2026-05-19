@@ -460,10 +460,8 @@ def _live_event_printer(*, show_interruption_notes: bool = False):
             )
             return
 
-        if event_type == "alignment_update" and show_interruption_notes:
-            summary = payload.get("summary")
-            if summary:
-                print(color(f"goal: {summary}", Style.DIM), flush=True)
+        if event_type == "alignment_update":
+            print(_alignment_status(payload, speaker_styles), flush=True)
             return
 
         if event_type == "goal_aligned":
@@ -541,6 +539,93 @@ def _score_text(score) -> str:
         return f" | interrupt {float(score):.1f}/10"
     except (TypeError, ValueError):
         return f" | interrupt {score}/10"
+
+
+def _alignment_status(payload: dict, speaker_styles: dict[str, str]) -> str:
+    current_idea = str(payload.get("current_idea") or "No concrete idea yet.")
+    by_agent = payload.get("by_agent") or {}
+    views = payload.get("agent_idea_views") or {}
+    lines = [
+        "",
+        _state_rule("room state"),
+        color("  │ buy-in", Style.DIM + Style.BOLD),
+    ]
+    if isinstance(by_agent, dict) and by_agent:
+        for agent_id, score in by_agent.items():
+            if not _is_number(score):
+                continue
+            score_value = float(score)
+            style = _style_for_speaker(str(agent_id), speaker_styles)
+            lines.append(
+                color("  │   ", Style.DIM)
+                + color(f"{_display_agent_id(str(agent_id)):<8}", style + Style.BOLD)
+                + f" {score_value:>4.0%}  "
+                + color(_buy_in_bar(score_value), style)
+            )
+    else:
+        lines.append(color("  │   " + str(payload.get("summary") or "no scores yet"), Style.DIM))
+
+    lines.extend([color("  │", Style.DIM), color("  │ shared idea", Style.DIM + Style.BOLD)])
+    lines.extend(_wrapped_state_text(current_idea, indent="  │   ", width=78))
+
+    if isinstance(views, dict) and views:
+        lines.extend([color("  │", Style.DIM), color("  │ agent idea views", Style.DIM + Style.BOLD)])
+        for agent_id, view in views.items():
+            style = _style_for_speaker(str(agent_id), speaker_styles)
+            lines.append(
+                color("  │   ", Style.DIM)
+                + color(_display_agent_id(str(agent_id)), style + Style.BOLD)
+            )
+            lines.extend(_wrapped_state_text(str(view), indent="  │     ", width=74, dim=True))
+
+    lines.append(_state_bottom())
+    return "\n".join(lines) + "\n"
+
+
+def _state_rule(title: str, width: int = 88) -> str:
+    prefix = f"  ┌─ {title} "
+    return color(prefix + "─" * max(8, width - len(prefix)), Style.DIM)
+
+
+def _state_bottom(width: int = 88) -> str:
+    return color("  └" + "─" * (width - 3), Style.DIM)
+
+
+def _buy_in_bar(score: float, width: int = 12) -> str:
+    filled = round(_clamp(score, 0.0, 1.0) * width)
+    return "█" * filled + "░" * (width - filled)
+
+
+def _wrapped_state_text(
+    text: str,
+    *,
+    indent: str,
+    width: int,
+    dim: bool = False,
+) -> list[str]:
+    style = Style.DIM if dim else ""
+    lines: list[str] = []
+    for paragraph in text.strip().splitlines() or [""]:
+        wrapped = wrap_text(paragraph, width=width) if paragraph else [""]
+        for line in wrapped:
+            lines.append(color(indent, Style.DIM) + color(line, style))
+    return lines
+
+
+def _display_agent_id(agent_id: str) -> str:
+    return agent_id.replace("_", " ").title()
+
+
+def _clamp(value: float, minimum: float, maximum: float) -> float:
+    return min(maximum, max(minimum, value))
+
+
+def _is_number(value) -> bool:
+    try:
+        float(value)
+        return True
+    except (TypeError, ValueError):
+        return False
 
 
 def _style_for_speaker(agent_id: str, speaker_styles: dict[str, str]) -> str:

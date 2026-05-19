@@ -171,7 +171,7 @@ def _run_private_round(
                 event_type="private",
                 extra={
                     "turns_remaining": len(participants) - index - 1,
-                    **goal_tracker.prompt_context(agent.id),
+                    **goal_tracker.visible_prompt_context(),
                 },
                 event_callback=event_callback,
                 private_memory=private_memory,
@@ -275,6 +275,7 @@ def _run_group_round(
                 statements.append(thought)
                 continue
             if _should_cut_in(
+                config=config,
                 decision=decision,
                 transcript=_public_transcript([*transcript, *statements]),
                 turn_index=turn_index,
@@ -296,7 +297,7 @@ def _run_group_round(
             extra={
                 "current_speaker": speaker.name,
                 "turns_remaining": max_turns - turn_index - 1,
-                **goal_tracker.prompt_context(speaker.id),
+                **goal_tracker.visible_prompt_context(),
                 "interruption_score": (
                     statement_decision.score
                     if statement_decision
@@ -318,6 +319,7 @@ def _run_group_round(
             client=client,
             model=model,
             transcript=_public_transcript([*transcript, *statements, statement]),
+            private_memory=private_memory,
         )
         _emit(
             event_callback,
@@ -326,6 +328,9 @@ def _run_group_round(
                 "round_id": round_spec.id,
                 "turn_number": turn_index + 1,
                 "summary": goal_tracker.summary(),
+                "by_agent": goal_tracker.alignments,
+                "current_idea": goal_tracker.current_idea,
+                "agent_idea_views": goal_tracker.agent_idea_views,
                 "aligned": goal_tracker.aligned,
                 "average": goal_tracker.average,
                 "minimum": goal_tracker.minimum,
@@ -422,11 +427,18 @@ def _should_stay_quiet(
 
 def _should_cut_in(
     *,
+    config: CrewConfig,
     decision: InterruptionDecision,
     transcript: list[Statement],
     turn_index: int,
 ) -> bool:
     if turn_index == 0:
+        return False
+    min_public_turns = max(
+        1,
+        int(_number(config.topic.variables.get("min_public_turns_before_interruptions"), 3)),
+    )
+    if len(transcript) < min_public_turns:
         return False
     if not decision.should_interrupt or decision.score < 7.0:
         return False
@@ -600,7 +612,7 @@ def _call_private_thought(
             "current_speaker": agent.name,
             "turns_remaining": (round_spec.max_turns or 0) - turn_number,
             "private_memory": _format_private_memory(private_memory.get(agent.id, [])),
-            **((goal_tracker or GoalTracker.empty()).prompt_context(agent.id)),
+            **((goal_tracker or GoalTracker.empty()).visible_prompt_context()),
         },
     )
     system_prompt = build_agent_system_prompt(config, agent)
@@ -692,7 +704,7 @@ def _call_recorder(
             "current_speaker": round_spec.speaker_name,
             "turns_remaining": 0,
             "private_memory": _format_all_private_memory(memory),
-            **goal.prompt_context(),
+            **goal.visible_prompt_context(),
         },
     )
     system_prompt = "\n\n".join(
@@ -802,11 +814,13 @@ class GoalTracker:
     threshold: float
     min_turns: int
     time_limit_seconds: int
+    current_idea: str
     evaluator: str
     fallback_self_step: float
     fallback_listener_step: float
     fallback_interrupt_factor: float
     alignments: dict[str, float]
+    agent_idea_views: dict[str, str]
     public_turns: int = 0
 
     @classmethod
@@ -826,11 +840,13 @@ class GoalTracker:
             0.0,
             1.0,
         )
+        current_idea = str(variables.get("starting_idea", "No idea has been named yet."))
         return cls(
             goal=goal,
             threshold=threshold,
             min_turns=min_turns,
             time_limit_seconds=time_limit_seconds,
+            current_idea=current_idea,
             evaluator=str(variables.get("goal_alignment_evaluator", "llm")).lower(),
             fallback_self_step=_clamp_float(
                 _number(variables.get("goal_alignment_step_self"), 0.06),
@@ -858,6 +874,7 @@ class GoalTracker:
                 )
                 for agent in agents
             },
+            agent_idea_views={agent.id: current_idea for agent in agents},
         )
 
     @classmethod
@@ -867,11 +884,13 @@ class GoalTracker:
             threshold=1.0,
             min_turns=1,
             time_limit_seconds=20 * 60,
+            current_idea="No idea has been named yet.",
             evaluator="off",
             fallback_self_step=0.0,
             fallback_listener_step=0.0,
             fallback_interrupt_factor=1.0,
             alignments={},
+            agent_idea_views={},
         )
 
     @property
@@ -900,6 +919,16 @@ class GoalTracker:
             "goal_alignment": f"{current:.0%}",
             "goal_alignment_summary": self.summary(),
             "goal_alignment_threshold": f"{self.threshold:.0%}",
+            "current_idea": self.current_idea,
+            "agent_idea_view": self.agent_idea_views.get(agent_id, self.current_idea),
+            "agent_idea_views_summary": self.idea_views_summary(),
+            "discussion_time_limit": _format_seconds(self.time_limit_seconds),
+        }
+
+    def visible_prompt_context(self) -> dict[str, str]:
+        """Context safe to show to speaking agents and the recorder."""
+        return {
+            "alignment_goal": self.goal,
             "discussion_time_limit": _format_seconds(self.time_limit_seconds),
         }
 
@@ -909,8 +938,18 @@ class GoalTracker:
         parts = [f"{agent_id}={score:.0%}" for agent_id, score in sorted(self.alignments.items())]
         return f"avg={self.average:.0%}, min={self.minimum:.0%}, " + ", ".join(parts)
 
+    def idea_views_summary(self) -> str:
+        if not self.agent_idea_views:
+            return "No idea views yet."
+        return "\n".join(
+            f"- {agent_id}: {view}"
+            for agent_id, view in sorted(self.agent_idea_views.items())
+        )
+
     def attach_metadata(self, statement: Statement) -> None:
         statement.metadata["goal"] = self.goal
+        statement.metadata["current_idea"] = self.current_idea
+        statement.metadata["agent_idea_views"] = dict(self.agent_idea_views)
         statement.metadata["goal_alignment_average"] = round(self.average, 4)
         statement.metadata["goal_alignment_minimum"] = round(self.minimum, 4)
         statement.metadata["goal_alignment_threshold"] = self.threshold
@@ -929,6 +968,7 @@ class GoalTracker:
         client: ModelClient,
         model: str,
         transcript: list[Statement],
+        private_memory: dict[str, list[str]],
     ) -> None:
         if statement.event_type in {"thought", "private", "synthesis"}:
             self.attach_metadata(statement)
@@ -939,18 +979,19 @@ class GoalTracker:
         source = "config-fallback"
         rationale = "Fallback alignment update from configured step sizes."
         if self.evaluator == "llm" and client.provider != "dry-run":
-            evaluation = self._evaluate_with_llm(
+            agent_states = self._evaluate_agent_states_with_llm(
                 statement=statement,
                 agents=agents,
                 config=config,
                 client=client,
                 model=model,
                 transcript=transcript,
+                private_memory=private_memory,
             )
-            if evaluation:
-                source = "llm"
-                rationale = evaluation.get("rationale", "LLM convergence evaluator.")
-                self._apply_evaluated_alignment(evaluation, before)
+            if agent_states:
+                source = "llm-agent-states"
+                rationale = "Parallel per-agent idea and buy-in state update."
+                self._apply_agent_states(agent_states, before)
             else:
                 self._apply_fallback_alignment(statement)
         else:
@@ -966,9 +1007,14 @@ class GoalTracker:
         }
         statement.metadata["goal_alignment_source"] = source
         statement.metadata["goal_alignment_rationale"] = rationale
+        statement.metadata["agent_state_rationales"] = {
+            agent_id: state.get("rationale", "")
+            for agent_id, state in getattr(self, "_last_agent_states", {}).items()
+        }
 
     def _apply_fallback_alignment(self, statement: Statement) -> None:
         factor = self.fallback_interrupt_factor if statement.event_type == "interrupt" else 1.0
+        self.agent_idea_views[statement.agent_id] = _fallback_current_idea(statement)
         for agent_id in self.alignments:
             step = self.fallback_self_step if agent_id == statement.agent_id else self.fallback_listener_step
             self.alignments[agent_id] = _clamp_float(
@@ -976,23 +1022,33 @@ class GoalTracker:
                 0.0,
                 1.0,
             )
+        self.current_idea = _derive_current_idea(
+            alignments=self.alignments,
+            views=self.agent_idea_views,
+        )
 
-    def _apply_evaluated_alignment(
+    def _apply_agent_states(
         self,
-        evaluation: dict[str, Any],
+        agent_states: dict[str, dict[str, Any]],
         before: dict[str, float],
     ) -> None:
-        by_agent = evaluation.get("by_agent", {})
-        if not isinstance(by_agent, dict):
-            return
+        self._last_agent_states = agent_states
         for agent_id, prior_score in before.items():
+            state = agent_states.get(agent_id, {})
+            view = state.get("idea")
+            if isinstance(view, str) and view.strip():
+                self.agent_idea_views[agent_id] = view.strip()
             self.alignments[agent_id] = _clamp_float(
-                _number(by_agent.get(agent_id), prior_score),
+                _number(state.get("buy_in"), prior_score),
                 0.0,
                 1.0,
             )
+        self.current_idea = _derive_current_idea(
+            alignments=self.alignments,
+            views=self.agent_idea_views,
+        )
 
-    def _evaluate_with_llm(
+    def _evaluate_agent_states_with_llm(
         self,
         *,
         statement: Statement,
@@ -1001,64 +1057,118 @@ class GoalTracker:
         client: ModelClient,
         model: str,
         transcript: list[Statement],
-    ) -> dict[str, Any] | None:
-        system_prompt = (
-            "You evaluate whether a working group is converging on its shared goal. "
-            "Do not use keyword matching. Judge the actual transcript, each persona, "
-            "and whether the group has enough agreement to move from discussion to a PRD. "
-            "Return compact JSON only."
+        private_memory: dict[str, list[str]],
+    ) -> dict[str, dict[str, Any]] | None:
+        workers = min(
+            len(agents),
+            max(
+                1,
+                int(_number(config.topic.variables.get("idea_state_workers"), len(agents))),
+            ),
         )
-        agent_lines = "\n".join(
-            f"- {agent.id} ({agent.name}): goals={agent.goals}; constraints={agent.constraints}; "
-            f"personality={json.dumps(agent.personality, sort_keys=True)}"
-            for agent in agents
+        state_model = _idea_state_model(config=config, client=client, model=model)
+        states: dict[str, dict[str, Any]] = {}
+        try:
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                futures = {
+                    executor.submit(
+                        self._evaluate_one_agent_state,
+                        agent=agent,
+                        config=config,
+                        client=client,
+                        model=state_model,
+                        transcript=transcript,
+                        statement=statement,
+                        private_notes=private_memory.get(agent.id, []),
+                    ): agent
+                    for agent in agents
+                }
+                for future in as_completed(futures):
+                    agent = futures[future]
+                    states[agent.id] = future.result()
+        except Exception as exc:
+            statement.metadata["goal_alignment_evaluator_error"] = str(exc)
+            return None
+        return states if states else None
+
+    def _evaluate_one_agent_state(
+        self,
+        *,
+        agent: AgentPersona,
+        config: CrewConfig,
+        client: ModelClient,
+        model: str,
+        transcript: list[Statement],
+        statement: Statement,
+        private_notes: list[str],
+    ) -> dict[str, Any]:
+        system_prompt = "\n\n".join(
+            part
+            for part in [
+                build_agent_system_prompt(config, agent),
+                (
+                    "You are not speaking to the group. You are updating this "
+                    "agent's private state after a public turn. Return compact "
+                    "JSON only."
+                ),
+            ]
+            if part.strip()
         )
         user_prompt = f"""
 Shared goal:
 {self.goal}
 
-Stop threshold:
-Each active agent should be at or above {self.threshold:.2f} alignment after at least {self.min_turns} public turns.
+Agent:
+- id: {agent.id}
+- name: {agent.name}
 
-Agents:
-{agent_lines}
+Previous private idea view for this agent:
+{self.agent_idea_views.get(agent.id, self.current_idea)}
 
-Current alignment state:
-{json.dumps(self.alignments, sort_keys=True)}
+Previous buy-in for this agent:
+{self.alignments.get(agent.id, self.average):.2f}
 
 Latest public statement:
 {statement.agent_name}: {statement.content}
+
+Private notes for this agent:
+{_format_private_memory(private_notes)}
 
 Transcript:
 {format_transcript(transcript, visibility="named")}
 
 Return JSON with this shape:
 {{
-  "by_agent": {{"agent_id": 0.0}},
-  "aligned": false,
-  "rationale": "one sentence about the convergence state"
+  "idea": "one short phrase describing what this agent currently thinks the proposal is",
+  "buy_in": 0.0,
+  "rationale": "one sentence explaining why this agent's buy-in moved or stayed still"
 }}
 
-The by_agent object must include every active agent id and each value must be a number from 0.0 to 1.0.
+Buy-in is 0.0 to 1.0. It means how willing this agent is to move forward with the current idea as the PRD target.
 """
-        try:
-            raw = client.complete(
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
-                model=model,
-                temperature=0.0,
-                metadata={
-                    "agent_id": statement.agent_id,
-                    "agent_name": statement.agent_name,
-                    "round_id": statement.round_id,
-                    "turn_number": statement.turn_number,
-                    "event_type": "goal_alignment_evaluation",
-                },
-            )
-            return _extract_json_object(raw)
-        except Exception as exc:
-            statement.metadata["goal_alignment_evaluator_error"] = str(exc)
-            return None
+        raw = client.complete(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            model=model,
+            temperature=0.0,
+            metadata={
+                "agent_id": agent.id,
+                "agent_name": agent.name,
+                "round_id": statement.round_id,
+                "turn_number": statement.turn_number,
+                "event_type": "idea_state_evaluation",
+            },
+        )
+        payload = _extract_json_object(raw)
+        return {
+            "idea": str(payload.get("idea", self.agent_idea_views.get(agent.id, self.current_idea))),
+            "buy_in": _clamp_float(
+                _number(payload.get("buy_in"), self.alignments.get(agent.id, self.average)),
+                0.0,
+                1.0,
+            ),
+            "rationale": str(payload.get("rationale", "")),
+        }
 
 
 def _discussion_time_limit_seconds(variables: dict[str, Any]) -> int:
@@ -1070,6 +1180,31 @@ def _discussion_time_limit_seconds(variables: dict[str, Any]) -> int:
     return 20 * 60
 
 
+def _idea_state_model(*, config: CrewConfig, client: ModelClient, model: str) -> str:
+    configured = config.topic.variables.get("idea_state_model")
+    if configured:
+        return str(configured)
+    if client.provider == "claude":
+        return "haiku"
+    return model
+
+
+def _derive_current_idea(
+    *,
+    alignments: dict[str, float],
+    views: dict[str, str],
+) -> str:
+    candidates = [
+        (alignments.get(agent_id, 0.0), view.strip())
+        for agent_id, view in views.items()
+        if view and view.strip()
+    ]
+    if not candidates:
+        return "No concrete idea yet."
+    _, view = max(candidates, key=lambda item: item[0])
+    return view
+
+
 def _format_seconds(seconds: int) -> str:
     minutes, remainder = divmod(max(0, seconds), 60)
     if minutes and not remainder:
@@ -1077,6 +1212,16 @@ def _format_seconds(seconds: int) -> str:
     if minutes:
         return f"{minutes} minutes {remainder} seconds"
     return f"{remainder} seconds"
+
+
+def _fallback_current_idea(statement: Statement) -> str:
+    content = " ".join(statement.content.split())
+    if not content:
+        return "No concrete idea yet."
+    first_sentence = re.split(r"(?<=[.!?])\s+", content, maxsplit=1)[0]
+    if len(first_sentence) <= 120:
+        return first_sentence
+    return first_sentence[:117].rstrip() + "..."
 
 
 def _clamp_float(value: float, minimum: float, maximum: float) -> float:
