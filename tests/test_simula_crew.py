@@ -6,7 +6,7 @@ from contextlib import redirect_stdout
 from pathlib import Path
 
 from simula_crew.clients import DryRunClient
-from simula_crew.cli import _default_model, main
+from simula_crew.cli import _default_model, _load_document_dir, main
 from simula_crew.engine import run_experiment
 from simula_crew.google_drive import google_sheet_export_url
 from simula_crew.ingest import (
@@ -394,6 +394,52 @@ class SurveyIngestionTests(unittest.TestCase):
             experiment = load_experiment(output_dir / "experiment.yaml")
             self.assertEqual(experiment.agents[0].id, "ada-example")
             self.assertEqual(experiment.task.prompt, "Design an AI labor-market research prototype.")
+
+    def test_document_dir_loads_top_level_and_nested_text_inputs(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "documents"
+            (root / "ada-example").mkdir(parents=True)
+            (root / "grace-example").mkdir()
+            (root / "ada-example.txt").write_text("Ada top-level note.", encoding="utf-8")
+            (root / "ada-example" / "resume.md").write_text("Ada nested resume.", encoding="utf-8")
+            (root / "grace-example" / "profile.csv").write_text("field,value\nskill,Product\n", encoding="utf-8")
+            (root / "grace-example" / "ignore.pdf").write_text("not extracted yet", encoding="utf-8")
+
+            documents = _load_document_dir(str(root))
+
+        self.assertEqual([doc.source for doc in documents["ada-example"]], ["ada-example/resume.md", "ada-example.txt"])
+        self.assertEqual(documents["ada-example"][0].content, "Ada nested resume.")
+        self.assertEqual([doc.source for doc in documents["grace-example"]], ["grace-example/profile.csv"])
+
+    def test_ingest_survey_cli_uses_normalized_document_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            csv_path = base / "responses.csv"
+            output_dir = base / "bundle"
+            document_dir = base / "documents"
+            (document_dir / "ada-example").mkdir(parents=True)
+            csv_path.write_text("Name,What is your occupation?\nAda Example,Economist\n", encoding="utf-8")
+            (document_dir / "ada-example" / "resume.txt").write_text(
+                "Ada works on labor market AI adoption.",
+                encoding="utf-8",
+            )
+
+            with redirect_stdout(io.StringIO()):
+                exit_code = main(
+                    [
+                        "ingest-survey",
+                        str(csv_path),
+                        "--output-dir",
+                        str(output_dir),
+                        "--document-dir",
+                        str(document_dir),
+                        "--quiet",
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            agents = json.loads((output_dir / "agents.json").read_text(encoding="utf-8"))["agents"]
+            self.assertEqual(agents[0]["history"][0], "ada-example/resume.txt: Ada works on labor market AI adoption.")
 
     def test_google_sheet_export_url_preserves_gid(self) -> None:
         url = google_sheet_export_url(

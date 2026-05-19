@@ -178,14 +178,36 @@ Gates/Wharton Build-a-thon challenge around AI, jobs, labor, organizations, and
 the economy. It intentionally does not include observed team project choices;
 override `--task-prompt` only when you want a different counterfactual task.
 
-If you have resume/CV text extracted locally, put files in a directory named by
-the generated person id, for example `daniel-rock.txt`, then include them:
+If you have resume/CV/profile text extracted locally, normalize it into a local
+document directory before running SimulaCrew. The tool does not care whether
+those files came from Google Drive, a form export, HR data, or manual prep.
+
+Supported local document shapes:
+
+```text
+documents/
+  daniel-rock.txt
+  ada-example/
+    resume.txt
+    profile.md
+    notes.csv
+```
+
+Top-level files are matched by filename stem (`daniel-rock.txt`), and nested
+files are matched by their first directory (`ada-example/resume.txt`). Supported
+extensions are `.txt`, `.md`, and `.csv`; PDF/DOCX files should be converted to
+text during setup before ingestion.
 
 ```bash
 simulacrew ingest-survey responses.csv \
-  --document-text-dir extracted_profiles \
+  --document-dir documents \
   --output-dir configs/generated/buildathon-team
 ```
+
+For the build-a-thon workflow, use Codex/Google auth or any other setup process
+to pull respondent files into this normalized local shape, preferably under
+`/private/tmp/...`, then pass that directory to `--document-dir`. Do not commit
+raw respondent files or generated private bundles to the repo.
 
 Generate the same config directly from a Google Sheet using Google auth:
 

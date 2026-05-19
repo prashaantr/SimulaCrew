@@ -37,6 +37,9 @@ from simula_crew.terminal import (
 )
 
 
+SUPPORTED_DOCUMENT_EXTENSIONS = {".csv", ".md", ".txt"}
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="simulacrew",
@@ -77,9 +80,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ingest_parser.add_argument("--name", default="survey-team")
     ingest_parser.add_argument(
+        "--document-dir",
+        default=None,
+        help=(
+            "Optional normalized local document directory. Supports <person-id>.txt, "
+            "<person-id>/*.txt, .md, and .csv files."
+        ),
+    )
+    ingest_parser.add_argument(
         "--document-text-dir",
         default=None,
-        help="Optional directory of .txt files named by person id, for example ada-example.txt.",
+        help=argparse.SUPPRESS,
     )
     ingest_parser.add_argument(
         "--quiet",
@@ -108,9 +119,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     google_ingest_parser.add_argument("--name", default="survey-team")
     google_ingest_parser.add_argument(
+        "--document-dir",
+        default=None,
+        help=(
+            "Optional normalized local document directory. Supports <person-id>.txt, "
+            "<person-id>/*.txt, .md, and .csv files."
+        ),
+    )
+    google_ingest_parser.add_argument(
         "--document-text-dir",
         default=None,
-        help="Optional directory of .txt files named by person id, for example ada-example.txt.",
+        help=argparse.SUPPRESS,
     )
     google_ingest_parser.add_argument(
         "--quiet",
@@ -183,7 +202,7 @@ def main(argv: list[str] | None = None) -> int:
 
 def _ingest_survey(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     try:
-        documents = _load_document_text_dir(args.document_text_dir)
+        documents = _load_document_dir(_document_dir_arg(args))
         agents = agents_from_survey_rows(
             load_survey_csv(args.survey_csv),
             documents_by_person=documents,
@@ -212,7 +231,7 @@ def _ingest_survey(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
 
 def _ingest_google_survey(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     try:
-        documents = _load_document_text_dir(args.document_text_dir)
+        documents = _load_document_dir(_document_dir_arg(args))
         agents = agents_from_survey_rows(
             load_google_sheet_rows(
                 args.sheet_url,
@@ -268,19 +287,43 @@ def _write_survey_bundle(
     return paths
 
 
-def _load_document_text_dir(path: str | None) -> dict[str, list[DocumentText]]:
+def _document_dir_arg(args: argparse.Namespace) -> str | None:
+    return args.document_dir or args.document_text_dir
+
+
+def _load_document_dir(path: str | None) -> dict[str, list[DocumentText]]:
     if not path:
         return {}
     root = Path(path)
+    if not root.exists():
+        raise OSError(f"document directory does not exist: {root}")
+    if not root.is_dir():
+        raise OSError(f"document path is not a directory: {root}")
     documents: dict[str, list[DocumentText]] = {}
-    for document_path in sorted(root.glob("*.txt")):
-        documents.setdefault(document_path.stem, []).append(
+    for document_path in _iter_document_files(root):
+        person_id = _person_id_for_document(root, document_path)
+        documents.setdefault(person_id, []).append(
             DocumentText(
-                source=document_path.name,
+                source=document_path.relative_to(root).as_posix(),
                 content=document_path.read_text(encoding="utf-8"),
             )
         )
     return documents
+
+
+def _iter_document_files(root: Path):
+    return sorted(
+        path
+        for path in root.rglob("*")
+        if path.is_file() and path.suffix.lower() in SUPPORTED_DOCUMENT_EXTENSIONS
+    )
+
+
+def _person_id_for_document(root: Path, document_path: Path) -> str:
+    relative = document_path.relative_to(root)
+    if len(relative.parts) > 1:
+        return relative.parts[0]
+    return document_path.stem
 
 
 def _list_experiments(experiments_dir: str) -> int:
