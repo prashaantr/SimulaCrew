@@ -241,14 +241,27 @@ The human running the CLI can see the independent thinking phase. The agents do 
 | persona                  | base prompt, history, skills, interests, traits     |
 | round                    | one phase of the run                                |
 | private round            | agents think independently before group chat        |
+| parallel thinking        | private round calls run concurrently                |
+| private thinking worker  | thread slot used for parallel private calls         |
 | private memory           | notes only the same agent can see later             |
 | public transcript        | messages agents actually said in the group chat     |
+| public turn              | a spoken group-chat message, not private thinking   |
 | group chat               | normal conversation where agents respond in turn    |
+| normal turn              | a non-interrupting "says" message                   |
+| protected opening        | early public turns where cut-ins are disabled       |
 | cut-in                   | an interruption rendered as "cuts in"               |
+| contestation pressure    | how strongly an agent wants to challenge direction  |
 | interruption score       | private estimate of how likely an agent is to cut in|
 | buy-in score             | how aligned each agent is with the emerging idea    |
 | current idea             | the idea the group appears to be converging on      |
+| agent idea view          | what one agent seems to think the current idea is   |
 | convergence              | internal estimate that agents are aligned on goal   |
+| alignment evaluator      | LLM or fallback process that updates buy-in state   |
+| fallback steps           | deterministic buy-in updates for dry-run/testing    |
+| discussion cap           | hard time limit before moving to PRD synthesis      |
+| show-interruption-notes  | CLI flag for classifier notes and agent idea views  |
+| model provider           | dry-run, Claude, or OpenAI backend                  |
+| Claude Haiku default     | default Claude model when --model is omitted        |
 | PRD recorder             | neutral final writer that turns discussion into PRD |
 | artifact                 | saved JSON and text output in runs/                 |
 +--------------------------+-----------------------------------------------------+
