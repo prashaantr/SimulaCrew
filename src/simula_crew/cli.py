@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 import threading
 import time
@@ -10,6 +11,13 @@ from textwrap import dedent, wrap as wrap_text
 
 from simula_crew.clients import create_client
 from simula_crew.engine import run_crew
+from simula_crew.google_drive import load_google_sheet_rows
+from simula_crew.ingest import (
+    DocumentText,
+    agents_from_survey_rows,
+    build_survey_crew_config,
+    load_survey_csv,
+)
 from simula_crew.io import list_configs, load_config, save_result
 from simula_crew.runtime import apply_runtime_inputs, parse_variable_assignments
 from simula_crew.scoring import LLMInterruptionClassifier
@@ -51,6 +59,55 @@ def build_parser() -> argparse.ArgumentParser:
 
     inspect_parser = subparsers.add_parser("inspect", help="Show preset details.")
     inspect_parser.add_argument("config")
+
+    ingest_parser = subparsers.add_parser(
+        "ingest-survey",
+        help="Generate a crew config from a survey CSV export.",
+    )
+    ingest_parser.add_argument("survey_csv")
+    ingest_parser.add_argument("--output", required=True)
+    ingest_parser.add_argument(
+        "--topic",
+        default="Deliberate as a team and produce the best final artifact for the task.",
+    )
+    ingest_parser.add_argument("--name", default="survey_team")
+    ingest_parser.add_argument(
+        "--document-text-dir",
+        default=None,
+        help="Optional directory of .txt files named by person id, for example ada-example.txt.",
+    )
+    ingest_parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Only print the output path.",
+    )
+
+    google_ingest_parser = subparsers.add_parser(
+        "ingest-google-survey",
+        help="Generate a crew config from a Google Sheets survey using Google auth.",
+    )
+    google_ingest_parser.add_argument("sheet_url")
+    google_ingest_parser.add_argument("--output", required=True)
+    google_ingest_parser.add_argument(
+        "--credentials-file",
+        default=None,
+        help="Optional service-account JSON file. If omitted, application default credentials are used.",
+    )
+    google_ingest_parser.add_argument(
+        "--topic",
+        default="Deliberate as a team and produce the best final artifact for the task.",
+    )
+    google_ingest_parser.add_argument("--name", default="survey_team")
+    google_ingest_parser.add_argument(
+        "--document-text-dir",
+        default=None,
+        help="Optional directory of .txt files named by person id, for example ada-example.txt.",
+    )
+    google_ingest_parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Only print the output path.",
+    )
 
     run_parser = subparsers.add_parser("run", help="Run a crew preset.")
     run_parser.add_argument("config")
@@ -104,11 +161,99 @@ def main(argv: list[str] | None = None) -> int:
         return _list_presets(args.config_dir)
     if args.command == "inspect":
         return _inspect(args.config)
+    if args.command == "ingest-survey":
+        return _ingest_survey(args, parser)
+    if args.command == "ingest-google-survey":
+        return _ingest_google_survey(args, parser)
     if args.command == "run":
         return _run(args, parser)
 
     parser.print_help()
     return 0
+
+
+def _ingest_survey(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    try:
+        documents = _load_document_text_dir(args.document_text_dir)
+        agents = agents_from_survey_rows(
+            load_survey_csv(args.survey_csv),
+            documents_by_person=documents,
+        )
+        if not agents:
+            parser.error("survey CSV did not contain any usable response rows")
+        payload = build_survey_crew_config(
+            agents,
+            name=args.name,
+            topic_prompt=args.topic,
+        )
+        output_path = Path(args.output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(
+            json.dumps(payload, indent=2) + "\n",
+            encoding="utf-8",
+        )
+    except OSError as exc:
+        parser.exit(2, f"error: {exc}\n")
+
+    if args.quiet:
+        print(output_path)
+        return 0
+
+    print(section("Survey Ingestion"))
+    print(key_value("Agents", str(len(agents))))
+    print(key_value("Output", str(output_path)))
+    return 0
+
+
+def _ingest_google_survey(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    try:
+        documents = _load_document_text_dir(args.document_text_dir)
+        agents = agents_from_survey_rows(
+            load_google_sheet_rows(
+                args.sheet_url,
+                credentials_file=args.credentials_file,
+            ),
+            documents_by_person=documents,
+        )
+        if not agents:
+            parser.error("Google Sheet did not contain any usable response rows")
+        payload = build_survey_crew_config(
+            agents,
+            name=args.name,
+            topic_prompt=args.topic,
+        )
+        output_path = Path(args.output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(
+            json.dumps(payload, indent=2) + "\n",
+            encoding="utf-8",
+        )
+    except (OSError, RuntimeError, ValueError) as exc:
+        parser.exit(2, f"error: {exc}\n")
+
+    if args.quiet:
+        print(output_path)
+        return 0
+
+    print(section("Google Survey Ingestion"))
+    print(key_value("Agents", str(len(agents))))
+    print(key_value("Output", str(output_path)))
+    return 0
+
+
+def _load_document_text_dir(path: str | None) -> dict[str, list[DocumentText]]:
+    if not path:
+        return {}
+    root = Path(path)
+    documents: dict[str, list[DocumentText]] = {}
+    for document_path in sorted(root.glob("*.txt")):
+        documents.setdefault(document_path.stem, []).append(
+            DocumentText(
+                source=document_path.name,
+                content=document_path.read_text(encoding="utf-8"),
+            )
+        )
+    return documents
 
 
 def _list_presets(config_dir: str) -> int:

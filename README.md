@@ -64,6 +64,12 @@ pip install -e '.[claude]'
 export ANTHROPIC_API_KEY='your-key'
 ```
 
+Google Sheets ingestion support:
+
+```bash
+pip install -e '.[google]'
+```
+
 Do not commit real keys. Use `.env.example` only as a template.
 
 If you see this error:
@@ -124,6 +130,39 @@ That command is not dry-run:
 | no --provider                 | defaults to dry-run                            |
 +-------------------------------+------------------------------------------------+
 ```
+
+Generate a crew config from a local Google Forms CSV export:
+
+```bash
+simulacrew ingest-survey responses.csv \
+  --output configs/generated/buildathon-team.json \
+  --topic "Design a prototype for studying how AI is reshaping jobs and the economy."
+```
+
+If you have resume/CV text extracted locally, put files in a directory named by
+the generated person id, for example `daniel-rock.txt`, then include them:
+
+```bash
+simulacrew ingest-survey responses.csv \
+  --document-text-dir extracted_profiles \
+  --output configs/generated/buildathon-team.json
+```
+
+Generate the same config directly from a Google Sheet using Google auth:
+
+```bash
+simulacrew ingest-google-survey \
+  "https://docs.google.com/spreadsheets/d/<sheet-id>/edit?gid=<gid>#gid=<gid>" \
+  --credentials-file service-account.json \
+  --output configs/generated/buildathon-team.json
+```
+
+For the most reliable local smoke test, use a service-account JSON and share
+the Sheet with that service account email. Application default credentials are
+also supported when they already have Drive read access, but the default
+`gcloud` OAuth client may be blocked by Google for Drive scopes. The durable
+ingestion core is still source-neutral: Google Sheets are fetched as CSV, then
+parsed by the same code path as local exports.
 
 By default the CLI prints a live, [jury-sim-style conversation](https://github.com/prashaantr/jurysim): each agent briefly thinks, then the group chats normally, with occasional natural cut-ins. The recorder writes the PRD only after discussion ends. This is not token-by-token streaming, but it prints before and after each agent call so long Claude runs do not look frozen.
 
