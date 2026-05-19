@@ -322,8 +322,12 @@ class SurveyIngestionTests(unittest.TestCase):
 
         self.assertEqual(bundle["task"]["prompt"], BUILDATHON_DEFAULT_TASK_PROMPT)
         self.assertIn("Gates/Wharton Build-a-thon", bundle["task"]["prompt"])
+        self.assertIn("Use only this shared hackpad project-idea menu", bundle["task"]["prompt"])
+        self.assertIn("New Work Tracker", bundle["task"]["prompt"])
+        self.assertIn("job-description rewriter", bundle["task"]["prompt"])
         self.assertIn("Do not assume any known real team project", bundle["task"]["prompt"])
-        self.assertNotIn("role", bundle["task"]["prompt"].lower())
+        self.assertNotIn("simulacra", bundle["task"]["prompt"].lower())
+        self.assertNotIn("allocate roles", bundle["task"]["prompt"].lower())
 
     def test_survey_experiment_bundle_dry_runs(self) -> None:
         agents = agents_from_survey_rows(
