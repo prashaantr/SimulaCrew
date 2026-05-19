@@ -323,17 +323,17 @@ Outputs are written to `runs/`:
 
 The final recorder turn contains the PRD. The conversation log is intentionally compact text, not a giant Markdown transcript.
 
-## Web Group Chat UI
+## Web UI
 
-SimulaCrew also includes a local Next.js UI for a group-chat view plus a buildathon team dashboard.
+SimulaCrew also includes a local Next.js UI with separate pages for the buildathon dashboard and the simulator chat.
 
 ```text
 +--------------------------------------------------------------------------------+
 | WEB UI                                                                         |
 +--------------------------------------------------------------------------------+
-| Prompt composer     ->  /api/simulate  ->  Python SimulaCrew engine            |
-| Team dashboard      ->  /api/teams     ->  local JSON path from env            |
-| Chat transcript     <-  runs/web/*.json <-  agent turns + room state + PRD      |
+| /teams             ->  /api/teams     ->  local JSON path from env             |
+| /chat              ->  /api/simulate  ->  Python SimulaCrew engine             |
+| /                  ->  redirect       ->  /teams                               |
 +--------------------------------------------------------------------------------+
 ```
 
@@ -357,7 +357,12 @@ Then start the UI:
 npm run dev
 ```
 
-Open <http://localhost:3000>. The default provider is `dry-run`; select `claude` in the UI when your Python environment has Claude support installed and `ANTHROPIC_API_KEY` exported.
+Open:
+
+- <http://localhost:3000/teams> for the team dashboard
+- <http://localhost:3000/chat> for the SimulaCrew group chat
+
+The chat page defaults to `dry-run`; select `claude` in the UI when your Python environment has Claude support installed and `ANTHROPIC_API_KEY` exported.
 
 The team file is intentionally not committed. These local-only paths are ignored:
 
