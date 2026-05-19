@@ -92,6 +92,9 @@ def agent_values(agent: AgentPersona) -> dict[str, Any]:
         "agent_backstory": agent.backstory or "None supplied.",
         "agent_speaking_style": agent.speaking_style or "None supplied.",
         "agent_knowledge": format_list(agent.knowledge),
+        "agent_skills": format_list(agent.skills),
+        "agent_interests": format_list(agent.interests),
+        "agent_history": format_list(agent.history),
         "agent_goals": format_list(agent.goals),
         "agent_constraints": format_list(agent.constraints),
     }

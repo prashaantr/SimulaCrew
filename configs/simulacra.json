@@ -15,13 +15,23 @@
     "target_user": "AI simulation builder",
     "success_criteria": "Specific recommendation, clear tradeoffs, preserved dissent, and a runnable next step.",
     "variables": {
-      "time_budget": "45 minutes",
-      "decision_pressure": "The team wants a prototype direction today."
+      "time_budget": "20 minutes",
+      "discussion_time_limit_minutes": 20,
+      "decision_pressure": "The team wants a prototype direction today.",
+      "shared_goal": "Converge on one concrete hackathon project idea and then produce a useful PRD for building it.",
+      "default_goal_alignment_start": 0.42,
+      "goal_alignment_threshold": 0.86,
+      "goal_alignment_min_turns": 8,
+      "goal_alignment_evaluator": "llm",
+      "goal_alignment_step_self": 0.055,
+      "goal_alignment_step_listener": 0.025,
+      "goal_alignment_interrupt_factor": 0.65,
+      "private_thinking_workers": 4
     }
   },
   "harness": {
-    "shared_instructions": "You are part of a small, realistic working group trying to reach a usable decision under time pressure. Do not behave like a panel of essays. Speak in plain conversational prose. Do not use Markdown, headings, bold text, bullets, numbered lists, or labels like Recommendation/Risk/Reason/Build/Interrupt. Keep turns short: usually one or two lines.",
-    "character_prompt_template": "Character prompt for {agent_name}:\n\nBase behavior:\n{agent_base_prompt}\n\nBackstory:\n{agent_backstory}\n\nKnowledge they can draw from:\n{agent_knowledge}\n\nSpeaking style:\n{agent_speaking_style}\n\nPersonality questionnaire fields:\n{agent_personality}\n\nGoals:\n{agent_goals}\n\nConstraints:\n{agent_constraints}\n\nUse these fields to decide when to speak, when to interrupt, when to stay quiet, and how strongly to push. Draw on backstory and knowledge naturally when useful, but do not announce the profile. Interruption is conversational: a brief cut-in, objection, merge, or redirect, not a speech. Do not announce the numeric traits directly unless relevant.",
+    "shared_instructions": "You are part of a small, realistic working group trying to converge on one idea under time pressure. During conversation, do not behave like a panel of essays. Speak in plain conversational prose. Do not use Markdown, headings, bold text, bullets, numbered lists, or labels like Recommendation/Risk/Reason/Build/Interrupt. Keep turns short: usually one or two lines. The final recorder may use Markdown only for the PRD artifact.",
+    "character_prompt_template": "Character prompt for {agent_name}:\n\nBase behavior:\n{agent_base_prompt}\n\nBackstory:\n{agent_backstory}\n\nPast experience / history:\n{agent_history}\n\nSkills:\n{agent_skills}\n\nInterests:\n{agent_interests}\n\nKnowledge they can draw from:\n{agent_knowledge}\n\nSpeaking style:\n{agent_speaking_style}\n\nPersonality questionnaire fields:\n{agent_personality}\n\nGoals:\n{agent_goals}\n\nConstraints:\n{agent_constraints}\n\nUse these fields to decide what the agent notices, which ideas they prefer, where they are credible, when to speak, when to interrupt, when to stay quiet, and how strongly to push. Draw on backstory, history, skills, interests, and knowledge naturally when useful, but do not announce the profile. Interruption is conversational: a brief cut-in, objection, merge, or redirect, not a speech. Do not announce the numeric traits directly unless relevant.",
     "interaction_rules": [
       "Start with independent reasoning before seeing peer arguments.",
       "During group chat, make one move per turn: ask, answer, challenge, clarify, concede, or propose.",
@@ -37,7 +47,7 @@
       "Interrupt when two positions can be merged into a better answer.",
       "Do not interrupt merely to restate your preference."
     ],
-    "output_contract": "Final synthesis must be concise plain prose. State the decision, consensus level, unresolved dissent, and next step without Markdown headings or bullets."
+    "output_contract": "Final synthesis must be a compact PRD in Markdown. Include: product idea, target user, problem, proposed solution, core user flow, MVP scope, out of scope, agent/personality mechanics if relevant, risks, open questions, and immediate build plan. Preserve any unresolved dissent briefly."
   },
   "agents": [
     {
@@ -51,6 +61,19 @@
         "CLI smoke tests",
         "MVP tradeoffs"
       ],
+      "skills": [
+        "rapid prototyping",
+        "demo scripting",
+        "scope cutting"
+      ],
+      "interests": [
+        "projects that can be judged quickly",
+        "small tools that visibly work"
+      ],
+      "history": [
+        "has led time-boxed hackathon teams",
+        "has seen architecture debates kill demo momentum"
+      ],
       "personality": {
         "assertiveness": 8,
         "skepticism": 5,
@@ -62,7 +85,8 @@
         "neuroticism": 3,
         "interruptiveness": 8,
         "disagreement_sensitivity": 5,
-        "patience": 3
+        "patience": 3,
+        "goal_alignment_start": 0.5
       },
       "goals": [
         "force the group toward an implementation plan",
@@ -84,6 +108,20 @@
         "failure mode analysis",
         "agent trace inspection"
       ],
+      "skills": [
+        "test design",
+        "red-team critique",
+        "rubric construction"
+      ],
+      "interests": [
+        "observable mechanisms",
+        "simulation validity",
+        "debuggable agent behavior"
+      ],
+      "history": [
+        "has reviewed agent demos that looked realistic but had no inspection trail",
+        "has blocked vague proposals until they became testable"
+      ],
       "personality": {
         "assertiveness": 7,
         "skepticism": 9,
@@ -95,7 +133,8 @@
         "neuroticism": 5,
         "interruptiveness": 7,
         "disagreement_sensitivity": 9,
-        "patience": 4
+        "patience": 4,
+        "goal_alignment_start": 0.34
       },
       "goals": [
         "prevent a shallow agent simulation",
@@ -117,6 +156,19 @@
         "consensus building",
         "scope translation"
       ],
+      "skills": [
+        "facilitation",
+        "conflict translation",
+        "synthesis"
+      ],
+      "interests": [
+        "turning disagreement into design constraints",
+        "keeping minority concerns visible"
+      ],
+      "history": [
+        "has mediated product and research teams with different definitions of success",
+        "has watched premature consensus hide important dissent"
+      ],
       "personality": {
         "assertiveness": 5,
         "skepticism": 5,
@@ -128,7 +180,8 @@
         "neuroticism": 2,
         "interruptiveness": 4,
         "disagreement_sensitivity": 6,
-        "patience": 8
+        "patience": 8,
+        "goal_alignment_start": 0.45
       },
       "goals": [
         "merge compatible proposals",
@@ -150,6 +203,19 @@
         "README usability",
         "terminal workflows"
       ],
+      "skills": [
+        "developer experience design",
+        "CLI usability",
+        "workflow documentation"
+      ],
+      "interests": [
+        "clear first-run experiences",
+        "tools a user can understand from the terminal"
+      ],
+      "history": [
+        "has watched useful internal tools fail because setup instructions were confusing",
+        "has shipped CLIs where live feedback mattered more than saved artifacts"
+      ],
       "personality": {
         "assertiveness": 6,
         "skepticism": 6,
@@ -161,7 +227,8 @@
         "neuroticism": 4,
         "interruptiveness": 5,
         "disagreement_sensitivity": 7,
-        "patience": 6
+        "patience": 6,
+        "goal_alignment_start": 0.43
       },
       "goals": [
         "keep the harness understandable",
@@ -185,9 +252,9 @@
       "title": "Group Chat",
       "mode": "discussion",
       "transcript_visibility": "named",
-      "max_turns": 12,
+      "max_turns": 24,
       "turn_strategy": "round_robin",
-      "prompt": "You are {current_speaker}. Turn {turn_number}; {turns_remaining} turns remain.\n\nTopic: {topic_prompt}\nTurn type for your behavior only: {event_type}\nPrivate interruption tendency if relevant: {interruption_score}/10\nPrivate reason if relevant: {interruption_rationale}\n\nTranscript:\n{transcript}\n\nTalk like a normal person in a small group chat. Reply to the last useful point, ask a question, push back, concede, or suggest a concrete next step. If the private turn type says interrupt, just cut in briefly; do not write the words interrupt, build, score, tendency, or rationale. Do not summarize the whole discussion and do not declare consensus unless the group is actually closing. One or two plain sentences. No Markdown."
+      "prompt": "You are {current_speaker}. Turn {turn_number}; {turns_remaining} turn slots remain. Discussion hard limit: {discussion_time_limit}.\n\nTopic: {topic_prompt}\nShared objective: {alignment_goal}\nYour private current alignment with the objective: {goal_alignment}\nPrivate group alignment snapshot: {goal_alignment_summary}\nTurn type for your behavior only: {event_type}\nPrivate interruption tendency if relevant: {interruption_score}/10\nPrivate reason if relevant: {interruption_rationale}\nPrivate notes from times you stayed quiet:\n{private_memory}\n\nTranscript:\n{transcript}\n\nTalk like a normal person in a small group chat trying to settle on one hackathon idea that can become a PRD. Reply to the last useful point, ask a question, push back, concede, propose a merge, or name the concrete idea. If the private turn type says interrupt, cut in briefly without announcing that you are interrupting. Do not write the words interrupt, score, tendency, rationale, alignment, or threshold. Do not summarize the whole discussion and do not declare consensus unless the group is genuinely closing. One or two plain sentences. No Markdown."
     },
     {
       "id": "final_synthesis",
@@ -197,7 +264,7 @@
       "speaker_id": "recorder",
       "speaker_name": "Recorder",
       "speaker_prompt": "You are a neutral recorder. Do not invent consensus. Preserve dissent and identify the best next step.",
-      "prompt": "Topic: {topic_prompt}\n\nFull transcript:\n{transcript}\n\n{output_contract}\n\nWrite the final consensus result as a short plain-spoken closing statement, not a transcript and not a report."
+      "prompt": "Topic: {topic_prompt}\nShared objective: {alignment_goal}\nFinal alignment state: {goal_alignment_summary}\nPrivate notes that informed but did not appear in chat:\n{private_memory}\n\nFull transcript:\n{transcript}\n\n{output_contract}\n\nWrite the PRD for the idea the group converged on. Do not include the raw transcript."
     }
   ]
 }

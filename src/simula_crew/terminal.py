@@ -14,6 +14,8 @@ class Style:
     YELLOW = "\033[33m"
     RED = "\033[31m"
     BLUE = "\033[34m"
+    CORAL = "\033[38;2;255;56;92m"
+    MUTED = "\033[38;2;106;106;106m"
 
 
 def supports_color() -> bool:
@@ -27,21 +29,14 @@ def color(text: str, style: str) -> str:
 
 
 def banner(title: str, subtitle: str = "") -> str:
-    width = max(64, min(96, max(len(title), len(subtitle)) + 8))
-    top = "█" * width
-    middle = "█" + title.center(width - 2) + "█"
-    parts = [
-        color(top, Style.CYAN),
-        color(middle, Style.BOLD + Style.CYAN),
-    ]
+    parts = [color(f"● {title}", Style.BOLD + Style.CORAL)]
     if subtitle:
-        parts.append(color("█" + subtitle.center(width - 2) + "█", Style.DIM))
-    parts.append(color(top, Style.CYAN))
+        parts.append(color(f"  {subtitle}", Style.MUTED))
     return "\n".join(parts)
 
 
 def section(title: str) -> str:
-    return color(f"\n--[ {title} ]" + "-" * max(0, 58 - len(title)), Style.BOLD + Style.MAGENTA)
+    return color(f"\n● {title}", Style.BOLD + Style.CORAL)
 
 
 def key_value(key: str, value: str) -> str:
@@ -54,15 +49,11 @@ def wrap(text: str, width: int = 88) -> str:
 
 def panel(title: str, body: str, width: int = 88) -> str:
     width = max(48, width)
-    title_text = f" {title} "
-    top = "+" + title_text + "-" * max(0, width - len(title_text) - 2) + "+"
-    bottom = "+" + "-" * (width - 2) + "+"
-    lines = [color(top, Style.BLUE)]
+    lines = [color(f"● {title}", Style.BOLD + Style.CORAL)]
     for paragraph in body.splitlines() or [""]:
         wrapped = fill(paragraph, width=width - 4) if paragraph else ""
         for line in wrapped.splitlines() or [""]:
-            lines.append(color("| ", Style.BLUE) + line.ljust(width - 4) + color(" |", Style.BLUE))
-    lines.append(color(bottom, Style.BLUE))
+            lines.append("  " + line)
     return "\n".join(lines)
 
 
@@ -80,11 +71,12 @@ def tree(items: list[tuple[str, str]]) -> str:
 
 
 def logo() -> str:
-    art = r"""
-   _____ _                 _        ______
-  / ___/(_)___ ___  __  __/ /___ _ / ____/_______ _      __
-  \__ \/ / __ `__ \/ / / / / __ `// /   / ___/ _ \ | /| / /
- ___/ / / / / / / / /_/ / / /_/ // /___/ /  /  __/ |/ |/ /
-/____/_/_/ /_/ /_/\__,_/_/\__,_/ \____/_/   \___/|__/|__/
+    art = """
+███████╗██╗███╗   ███╗██╗   ██╗██╗      █████╗  ██████╗██████╗ ███████╗██╗    ██╗
+██╔════╝██║████╗ ████║██║   ██║██║     ██╔══██╗██╔════╝██╔══██╗██╔════╝██║    ██║
+███████╗██║██╔████╔██║██║   ██║██║     ███████║██║     ██████╔╝█████╗  ██║ █╗ ██║
+╚════██║██║██║╚██╔╝██║██║   ██║██║     ██╔══██║██║     ██╔══██╗██╔══╝  ██║███╗██║
+███████║██║██║ ╚═╝ ██║╚██████╔╝███████╗██║  ██║╚██████╗██║  ██║███████╗╚███╔███╔╝
+╚══════╝╚═╝╚═╝     ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝╚══════╝ ╚══╝╚══╝
 """
-    return color(art.strip("\n"), Style.BOLD + Style.CYAN)
+    return color(art.strip("\n"), Style.BOLD + Style.CORAL)

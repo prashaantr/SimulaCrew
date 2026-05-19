@@ -40,7 +40,7 @@ def build_parser() -> argparse.ArgumentParser:
               simulacrew inspect configs/simulacra.json
               simulacrew run configs/simulacra.json
               simulacrew run configs/simulacra.json --prompt "What should the crew decide?"
-              simulacrew run configs/simulacra.json --provider claude --model sonnet --interruption-classifier llm --prompt-file challenge.txt
+              simulacrew run configs/simulacra.json --provider claude --interruption-classifier llm --prompt-file challenge.txt
             """
         ),
     )
@@ -165,8 +165,6 @@ def _inspect(config_path: str) -> int:
 
 
 def _run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
-    if args.provider != "dry-run" and not args.model:
-        parser.error("--model is required when --provider is not dry-run")
     if args.max_agents is not None and args.max_agents <= 0:
         parser.error("--max-agents must be greater than zero")
     if args.temperature < 0 or args.temperature > 2:
@@ -180,7 +178,7 @@ def _run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
             variables=parse_variable_assignments(args.var),
         )
         client = create_client(args.provider)
-        model = args.model or ("dry-run-model" if args.provider == "dry-run" else "sonnet")
+        model = args.model or _default_model(args.provider)
         interruption_classifier = None
         if args.interruption_classifier == "llm":
             interruption_classifier = LLMInterruptionClassifier(
@@ -224,6 +222,14 @@ def _run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     return 0
 
 
+def _default_model(provider: str) -> str:
+    if provider == "claude":
+        return "haiku"
+    if provider == "openai":
+        return "gpt-4o-mini"
+    return "dry-run-model"
+
+
 def _print_run_header(
     config_name: str,
     topic_title: str,
@@ -239,7 +245,7 @@ def _print_run_header(
                 ("config", config_name),
                 ("provider", provider),
                 ("model", model),
-                ("mode", "█ live per-agent output"),
+                ("mode", "live per-agent output"),
             ],
             width=88,
         ),
@@ -288,7 +294,7 @@ def _live_event_printer(*, show_interruption_notes: bool = False):
                 if indicator:
                     indicator.stop()
                     indicator = None
-                print(color(f"░ note: {rationale}", Style.DIM), flush=True)
+                print(color(f"note: {rationale}", Style.DIM), flush=True)
             return
 
         if event_type == "statement":
@@ -305,19 +311,37 @@ def _live_event_printer(*, show_interruption_notes: bool = False):
                 ),
                 flush=True,
             )
+            return
+
+        if event_type == "alignment_update" and show_interruption_notes:
+            summary = payload.get("summary")
+            if summary:
+                print(color(f"goal: {summary}", Style.DIM), flush=True)
+            return
+
+        if event_type == "goal_aligned":
+            if indicator:
+                indicator.stop()
+                indicator = None
+            print(color("Goal convergence reached. Moving to PRD.", Style.DIM), flush=True)
+            return
+
+        if event_type == "discussion_time_limit_reached":
+            if indicator:
+                indicator.stop()
+                indicator = None
+            print(color("Discussion time limit reached. Moving to PRD.", Style.DIM), flush=True)
+            return
 
     return handle
 
 
 def _conversation_phase(mode: str, title: str) -> str:
-    line = "█" * 88
     phase = "GROUP CHAT" if mode == "DISCUSSION" else mode
     return "\n".join(
         [
             "",
-            color(line, Style.DIM),
             color(f"█ {phase} / {title}", Style.BOLD + Style.MAGENTA),
-            color(line, Style.DIM),
         ]
     )
 
@@ -336,16 +360,18 @@ def _conversation_statement(
         else None
     )
     score_text = _score_text(score)
-    marker = "█" if statement.event_type == "interrupt" else "▓"
+    marker = "!" if statement.event_type == "interrupt" else ">"
     header = (
         color(f"{marker} {statement.agent_name}", speaker_style + Style.BOLD)
         + color(f"  {label.lower()}  {time_text}{score_text}", Style.DIM)
     )
     lines = [header]
+    if statement.event_type == "thought":
+        return "\n".join(lines) + "\n"
     for paragraph in statement.content.strip().splitlines() or [""]:
         wrapped = wrap_text(paragraph, width=82) if paragraph else [""]
         for line in wrapped:
-            lines.append(color("░ ", speaker_style) + line)
+            lines.append("  " + line)
     return "\n".join(lines) + "\n"
 
 
@@ -396,11 +422,11 @@ class TypingIndicator:
     def stop(self) -> None:
         self._stop.set()
         self._thread.join(timeout=0.3)
-        sys.stdout.write("\r" + " " * 100 + "\r")
+        sys.stdout.write("\r\033[K")
         sys.stdout.flush()
 
     def _run(self) -> None:
-        frames = ["░  ", "▒  ", "▓  ", "█  "]
+        frames = ["░", "▒", "▓"]
         index = 0
         while not self._stop.is_set():
             sys.stdout.write("\r" + color(f"{frames[index % len(frames)]} {self.message}", Style.DIM))

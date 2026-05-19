@@ -84,6 +84,9 @@ class AgentPersona:
     backstory: str = ""
     speaking_style: str = ""
     knowledge: list[str] = field(default_factory=list)
+    skills: list[str] = field(default_factory=list)
+    interests: list[str] = field(default_factory=list)
+    history: list[str] = field(default_factory=list)
     goals: list[str] = field(default_factory=list)
     constraints: list[str] = field(default_factory=list)
 
@@ -99,6 +102,9 @@ class AgentPersona:
             backstory=_optional_text(data, "backstory", "", f"agents[{agent_id}]"),
             speaking_style=_optional_text(data, "speaking_style", "", f"agents[{agent_id}]"),
             knowledge=_optional_text_list(data, "knowledge", f"agents[{agent_id}]"),
+            skills=_optional_text_list(data, "skills", f"agents[{agent_id}]"),
+            interests=_optional_text_list(data, "interests", f"agents[{agent_id}]"),
+            history=_optional_text_list(data, "history", f"agents[{agent_id}]"),
             goals=_optional_text_list(data, "goals", f"agents[{agent_id}]"),
             constraints=_optional_text_list(
                 data,

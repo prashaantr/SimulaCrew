@@ -83,6 +83,8 @@ def format_markdown(result: CrewResult) -> str:
 def _statement_label(event_type: str) -> str:
     if event_type == "private":
         return "thinking"
+    if event_type == "thought":
+        return "stays quiet"
     if event_type == "interrupt":
         return "cuts in"
     if event_type == "synthesis":

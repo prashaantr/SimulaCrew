@@ -125,11 +125,18 @@ def _dry_run_response(
 ) -> str:
     if event_type == "synthesis":
         return (
-            "The group lands on the general harness first, with the moral deliberation "
-            "simulator as the first proof preset.\n"
-            "Niko still does not want to call it realistic until interruption scoring "
-            "and evaluation hooks are visible.\n"
-            "The next move is one CLI smoke test with two agents, then one Claude run."
+            "# PRD: SimulaCrew Hackathon Harness\n\n"
+            "## Product Idea\n"
+            "A CLI that spins up personality-driven agents, lets them converge on one "
+            "hackathon idea, and turns the discussion into a compact PRD.\n\n"
+            "## Target User\n"
+            "Builders who want to test group-agent behavior before wiring a domain workflow.\n\n"
+            "## MVP Scope\n"
+            "Run one preset, show live group chat with natural cut-ins, preserve private "
+            "thoughts in JSON, and output the PRD at the end.\n\n"
+            "## Immediate Build Plan\n"
+            "Keep the harness first, use one concrete preset as the acceptance test, and "
+            "inspect interruption and convergence metadata only when debugging."
         )
 
     private = {
