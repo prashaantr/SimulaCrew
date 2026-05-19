@@ -1,11 +1,20 @@
+import io
 import json
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 
 from simula_crew.clients import DryRunClient
-from simula_crew.cli import _default_model
+from simula_crew.cli import _default_model, main
 from simula_crew.engine import run_crew
+from simula_crew.google_drive import google_sheet_export_url
+from simula_crew.ingest import (
+    DocumentText,
+    agents_from_survey_rows,
+    build_survey_crew_config,
+    load_survey_csv,
+)
 from simula_crew.io import load_config, format_conversation, save_result
 from simula_crew.prompts import PromptRenderError, format_transcript, render_template
 from simula_crew.runtime import apply_runtime_inputs, parse_variable_assignments
@@ -94,6 +103,143 @@ class RuntimeTests(unittest.TestCase):
 
     def test_claude_defaults_to_haiku(self) -> None:
         self.assertEqual(_default_model("claude"), "haiku")
+
+
+class SurveyIngestionTests(unittest.TestCase):
+    def test_survey_row_builds_agent_with_demographics_and_document_evidence(self) -> None:
+        rows = [
+            {
+                "Please tell us the name you use in the Hackpad (we want to match you to your real team!)": "Ada Example",
+                "Which part of the United States do you currently live in?": "Northeast",
+                "What is the sex that you were assigned at birth?": "Female",
+                "How old are you?": "30-49",
+                "What is your race or origin?": "Asian",
+                "Which best describes your primary role?": "Faculty",
+                "What is your occupation?": "Economist",
+                "In this occupation, what kind of work do you do and what are the most important activities or duties?": "Research, teaching, and advising.",
+                "In a few sentences, describe your educational and occupational background. Do you have a disciplinary affiliation or approach (e.g., economics, computer science)?": "Labor economics and computer science.",
+                "In a few sentences, what draws you to the question of how AI is reshaping jobs and the economy?": "I care about broad access to AI benefits.",
+                "How would you describe the skill set that you contribute to the team?": "Causal inference, field experiments",
+                "How would you describe the data sources you are most excited to work with?": "Job postings and worker accounts",
+                "I enjoy being unique and different from others in many ways.": "Agree",
+                "I often do “my own thing.”": "Strongly Agree",
+                "I feel good when I cooperate with others.": "Agree",
+                "I prefer to work without instructions from others": "Agree",
+                "I am outgoing, sociable.": "Disagree",
+                "I tend to find fault with others.": "Agree",
+                "I do a thorough job.": "Strongly Agree",
+                "I get nervous easily.": "Disagree",
+                "I have an active imagination.": "Agree",
+                "I really enjoy a task that involves coming up with new solutions to problems": "Strongly Agree",
+                "What do you value the most in your life?": "Family and useful work",
+                "Imagine yourself a few years from now. Maybe you want your life to be the same in some ways as it is now. Maybe you want it to be different in some ways. What do you hope for?": "More time for important research.",
+            }
+        ]
+        documents = {
+            "ada-example": [
+                DocumentText(
+                    source="resume.txt",
+                    content="Ada studies labor markets, AI adoption, and field experiments.",
+                )
+            ]
+        }
+
+        agents = agents_from_survey_rows(rows, documents_by_person=documents)
+
+        self.assertEqual(len(agents), 1)
+        agent = agents[0]
+        self.assertEqual(agent.id, "ada-example")
+        self.assertEqual(agent.name, "Ada Example")
+        self.assertIn("Female", agent.backstory)
+        self.assertIn("Labor economics", agent.backstory)
+        self.assertIn("Causal inference", agent.skills)
+        self.assertIn("Job postings and worker accounts", agent.interests)
+        self.assertIn("resume.txt", agent.history[0])
+        self.assertGreater(agent.personality["openness"], 5)
+        self.assertGreater(agent.personality["conscientiousness"], 5)
+        self.assertLess(agent.personality["extraversion"], 6)
+        self.assertIn("broad access", agent.goals[0])
+
+    def test_survey_csv_loader_skips_empty_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "responses.csv"
+            path.write_text(
+                "Name,Occupation\n"
+                "Ada Example,Economist\n"
+                ",\n",
+                encoding="utf-8",
+            )
+
+            rows = load_survey_csv(path)
+
+        self.assertEqual(rows, [{"Name": "Ada Example", "Occupation": "Economist"}])
+
+    def test_build_survey_crew_config_loads_as_existing_config(self) -> None:
+        agents = agents_from_survey_rows(
+            [
+                {
+                    "Name": "Ada Example",
+                    "Occupation": "Economist",
+                    "How would you describe the skill set that you contribute to the team?": "Research design",
+                },
+                {
+                    "Name": "Grace Example",
+                    "Occupation": "Product lead",
+                    "How would you describe the skill set that you contribute to the team?": "Product strategy",
+                },
+            ]
+        )
+
+        payload = build_survey_crew_config(
+            agents,
+            name="survey_team",
+            topic_prompt="Design an AI labor-market research prototype.",
+        )
+        config = CrewConfig.from_dict(payload)
+
+        self.assertEqual(config.name, "survey_team")
+        self.assertEqual(len(config.agents), 2)
+        self.assertEqual(config.rounds[1].mode, "discussion")
+        self.assertIn("survey-derived", config.harness.character_prompt_template)
+
+    def test_ingest_survey_cli_writes_loadable_config(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            csv_path = Path(temp_dir) / "responses.csv"
+            output_path = Path(temp_dir) / "team.json"
+            csv_path.write_text(
+                "Name,What is your occupation?,How would you describe the skill set that you contribute to the team?\n"
+                "Ada Example,Economist,Research design\n",
+                encoding="utf-8",
+            )
+
+            with redirect_stdout(io.StringIO()):
+                exit_code = main(
+                    [
+                        "ingest-survey",
+                        str(csv_path),
+                        "--output",
+                        str(output_path),
+                        "--topic",
+                        "Design an AI labor-market research prototype.",
+                        "--quiet",
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            self.assertTrue(output_path.exists())
+            config = load_config(output_path)
+            self.assertEqual(config.agents[0].id, "ada-example")
+            self.assertEqual(config.topic.prompt, "Design an AI labor-market research prototype.")
+
+    def test_google_sheet_export_url_preserves_gid(self) -> None:
+        url = google_sheet_export_url(
+            "https://docs.google.com/spreadsheets/d/abc123/edit?gid=811813731#gid=811813731"
+        )
+
+        self.assertEqual(
+            url,
+            "https://docs.google.com/spreadsheets/d/abc123/export?format=csv&gid=811813731",
+        )
 
 
 class EngineTests(unittest.TestCase):
