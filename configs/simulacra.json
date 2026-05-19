@@ -26,6 +26,7 @@
       "goal_alignment_step_self": 0.055,
       "goal_alignment_step_listener": 0.025,
       "goal_alignment_interrupt_factor": 0.65,
+      "min_public_turns_before_interruptions": 3,
       "private_thinking_workers": 4
     }
   },
@@ -254,7 +255,7 @@
       "transcript_visibility": "named",
       "max_turns": 24,
       "turn_strategy": "round_robin",
-      "prompt": "You are {current_speaker}. Turn {turn_number}; {turns_remaining} turn slots remain. Discussion hard limit: {discussion_time_limit}.\n\nTopic: {topic_prompt}\nShared objective: {alignment_goal}\nYour private current alignment with the objective: {goal_alignment}\nPrivate group alignment snapshot: {goal_alignment_summary}\nTurn type for your behavior only: {event_type}\nPrivate interruption tendency if relevant: {interruption_score}/10\nPrivate reason if relevant: {interruption_rationale}\nPrivate notes from times you stayed quiet:\n{private_memory}\n\nTranscript:\n{transcript}\n\nTalk like a normal person in a small group chat trying to settle on one hackathon idea that can become a PRD. Reply to the last useful point, ask a question, push back, concede, propose a merge, or name the concrete idea. If the private turn type says interrupt, cut in briefly without announcing that you are interrupting. Do not write the words interrupt, score, tendency, rationale, alignment, or threshold. Do not summarize the whole discussion and do not declare consensus unless the group is genuinely closing. One or two plain sentences. No Markdown."
+      "prompt": "You are {current_speaker}. Turn {turn_number}; {turns_remaining} turn slots remain. Discussion hard limit: {discussion_time_limit}.\n\nTopic: {topic_prompt}\nShared objective: {alignment_goal}\nCurrent idea the room may be converging on: {current_idea}\nYour private understanding of that idea: {agent_idea_view}\nYour private current buy-in with the objective: {goal_alignment}\nPrivate group buy-in snapshot: {goal_alignment_summary}\nTurn type for your behavior only: {event_type}\nPrivate interruption tendency if relevant: {interruption_score}/10\nPrivate reason if relevant: {interruption_rationale}\nPrivate notes from times you stayed quiet:\n{private_memory}\n\nTranscript:\n{transcript}\n\nTalk like a normal person in a small group chat trying to settle on one hackathon idea that can become a PRD. If this is a normal turn, build directly on the last public message: answer it, ask the next clarifying question, or propose the next step. If the private turn type says interrupt, cut in briefly only to correct direction, contest a weak assumption, or merge ideas; do not announce that you are interrupting. Do not write the words interrupt, score, tendency, rationale, alignment, threshold, or buy-in. Do not summarize the whole discussion and do not declare consensus unless the group is genuinely closing. One or two plain sentences. No Markdown."
     },
     {
       "id": "final_synthesis",

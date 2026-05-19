@@ -275,6 +275,7 @@ def _run_group_round(
                 statements.append(thought)
                 continue
             if _should_cut_in(
+                config=config,
                 decision=decision,
                 transcript=_public_transcript([*transcript, *statements]),
                 turn_index=turn_index,
@@ -326,6 +327,9 @@ def _run_group_round(
                 "round_id": round_spec.id,
                 "turn_number": turn_index + 1,
                 "summary": goal_tracker.summary(),
+                "by_agent": goal_tracker.alignments,
+                "current_idea": goal_tracker.current_idea,
+                "agent_idea_views": goal_tracker.agent_idea_views,
                 "aligned": goal_tracker.aligned,
                 "average": goal_tracker.average,
                 "minimum": goal_tracker.minimum,
@@ -422,11 +426,18 @@ def _should_stay_quiet(
 
 def _should_cut_in(
     *,
+    config: CrewConfig,
     decision: InterruptionDecision,
     transcript: list[Statement],
     turn_index: int,
 ) -> bool:
     if turn_index == 0:
+        return False
+    min_public_turns = max(
+        1,
+        int(_number(config.topic.variables.get("min_public_turns_before_interruptions"), 3)),
+    )
+    if len(transcript) < min_public_turns:
         return False
     if not decision.should_interrupt or decision.score < 7.0:
         return False
@@ -802,11 +813,13 @@ class GoalTracker:
     threshold: float
     min_turns: int
     time_limit_seconds: int
+    current_idea: str
     evaluator: str
     fallback_self_step: float
     fallback_listener_step: float
     fallback_interrupt_factor: float
     alignments: dict[str, float]
+    agent_idea_views: dict[str, str]
     public_turns: int = 0
 
     @classmethod
@@ -826,11 +839,13 @@ class GoalTracker:
             0.0,
             1.0,
         )
+        current_idea = str(variables.get("starting_idea", "No idea has been named yet."))
         return cls(
             goal=goal,
             threshold=threshold,
             min_turns=min_turns,
             time_limit_seconds=time_limit_seconds,
+            current_idea=current_idea,
             evaluator=str(variables.get("goal_alignment_evaluator", "llm")).lower(),
             fallback_self_step=_clamp_float(
                 _number(variables.get("goal_alignment_step_self"), 0.06),
@@ -858,6 +873,7 @@ class GoalTracker:
                 )
                 for agent in agents
             },
+            agent_idea_views={agent.id: current_idea for agent in agents},
         )
 
     @classmethod
@@ -867,11 +883,13 @@ class GoalTracker:
             threshold=1.0,
             min_turns=1,
             time_limit_seconds=20 * 60,
+            current_idea="No idea has been named yet.",
             evaluator="off",
             fallback_self_step=0.0,
             fallback_listener_step=0.0,
             fallback_interrupt_factor=1.0,
             alignments={},
+            agent_idea_views={},
         )
 
     @property
@@ -900,6 +918,9 @@ class GoalTracker:
             "goal_alignment": f"{current:.0%}",
             "goal_alignment_summary": self.summary(),
             "goal_alignment_threshold": f"{self.threshold:.0%}",
+            "current_idea": self.current_idea,
+            "agent_idea_view": self.agent_idea_views.get(agent_id, self.current_idea),
+            "agent_idea_views_summary": self.idea_views_summary(),
             "discussion_time_limit": _format_seconds(self.time_limit_seconds),
         }
 
@@ -909,8 +930,18 @@ class GoalTracker:
         parts = [f"{agent_id}={score:.0%}" for agent_id, score in sorted(self.alignments.items())]
         return f"avg={self.average:.0%}, min={self.minimum:.0%}, " + ", ".join(parts)
 
+    def idea_views_summary(self) -> str:
+        if not self.agent_idea_views:
+            return "No idea views yet."
+        return "\n".join(
+            f"- {agent_id}: {view}"
+            for agent_id, view in sorted(self.agent_idea_views.items())
+        )
+
     def attach_metadata(self, statement: Statement) -> None:
         statement.metadata["goal"] = self.goal
+        statement.metadata["current_idea"] = self.current_idea
+        statement.metadata["agent_idea_views"] = dict(self.agent_idea_views)
         statement.metadata["goal_alignment_average"] = round(self.average, 4)
         statement.metadata["goal_alignment_minimum"] = round(self.minimum, 4)
         statement.metadata["goal_alignment_threshold"] = self.threshold
@@ -969,6 +1000,8 @@ class GoalTracker:
 
     def _apply_fallback_alignment(self, statement: Statement) -> None:
         factor = self.fallback_interrupt_factor if statement.event_type == "interrupt" else 1.0
+        self.current_idea = _fallback_current_idea(statement)
+        self.agent_idea_views[statement.agent_id] = self.current_idea
         for agent_id in self.alignments:
             step = self.fallback_self_step if agent_id == statement.agent_id else self.fallback_listener_step
             self.alignments[agent_id] = _clamp_float(
@@ -985,6 +1018,15 @@ class GoalTracker:
         by_agent = evaluation.get("by_agent", {})
         if not isinstance(by_agent, dict):
             return
+        current_idea = evaluation.get("current_idea")
+        if isinstance(current_idea, str) and current_idea.strip():
+            self.current_idea = current_idea.strip()
+        agent_views = evaluation.get("agent_views", {})
+        if isinstance(agent_views, dict):
+            for agent_id in before:
+                view = agent_views.get(agent_id)
+                if isinstance(view, str) and view.strip():
+                    self.agent_idea_views[agent_id] = view.strip()
         for agent_id, prior_score in before.items():
             self.alignments[agent_id] = _clamp_float(
                 _number(by_agent.get(agent_id), prior_score),
@@ -1035,11 +1077,13 @@ Transcript:
 Return JSON with this shape:
 {{
   "by_agent": {{"agent_id": 0.0}},
+  "current_idea": "one short phrase describing the idea the group is currently converging on, or 'No concrete idea yet'",
+  "agent_views": {{"agent_id": "one short phrase describing what this agent seems to think the idea is"}},
   "aligned": false,
   "rationale": "one sentence about the convergence state"
 }}
 
-The by_agent object must include every active agent id and each value must be a number from 0.0 to 1.0.
+The by_agent and agent_views objects must include every active agent id. Each by_agent value must be a number from 0.0 to 1.0.
 """
         try:
             raw = client.complete(
@@ -1077,6 +1121,16 @@ def _format_seconds(seconds: int) -> str:
     if minutes:
         return f"{minutes} minutes {remainder} seconds"
     return f"{remainder} seconds"
+
+
+def _fallback_current_idea(statement: Statement) -> str:
+    content = " ".join(statement.content.split())
+    if not content:
+        return "No concrete idea yet."
+    first_sentence = re.split(r"(?<=[.!?])\s+", content, maxsplit=1)[0]
+    if len(first_sentence) <= 120:
+        return first_sentence
+    return first_sentence[:117].rstrip() + "..."
 
 
 def _clamp_float(value: float, minimum: float, maximum: float) -> float:

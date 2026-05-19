@@ -315,10 +315,12 @@ def _live_event_printer(*, show_interruption_notes: bool = False):
             )
             return
 
-        if event_type == "alignment_update" and show_interruption_notes:
-            summary = payload.get("summary")
-            if summary:
-                print(color(f"goal: {summary}", Style.DIM), flush=True)
+        if event_type == "alignment_update":
+            print(_buy_in_status(payload), flush=True)
+            if show_interruption_notes:
+                views = _idea_views_status(payload)
+                if views:
+                    print(views, flush=True)
             return
 
         if event_type == "goal_aligned":
@@ -396,6 +398,41 @@ def _score_text(score) -> str:
         return f" | interrupt {float(score):.1f}/10"
     except (TypeError, ValueError):
         return f" | interrupt {score}/10"
+
+
+def _buy_in_status(payload: dict) -> str:
+    current_idea = str(payload.get("current_idea") or "No concrete idea yet.")
+    by_agent = payload.get("by_agent") or {}
+    if isinstance(by_agent, dict) and by_agent:
+        scores = "  ".join(
+            f"{agent_id} {float(score):.0%}"
+            for agent_id, score in sorted(by_agent.items())
+            if _is_number(score)
+        )
+    else:
+        scores = str(payload.get("summary") or "no scores yet")
+    return color(f"◇ buy-in  {scores}", Style.DIM) + "\n" + color(
+        f"◇ idea    {current_idea}",
+        Style.DIM,
+    )
+
+
+def _idea_views_status(payload: dict) -> str:
+    views = payload.get("agent_idea_views") or {}
+    if not isinstance(views, dict) or not views:
+        return ""
+    lines = [color("◇ agent idea views", Style.DIM)]
+    for agent_id, view in sorted(views.items()):
+        lines.append(color(f"  {agent_id}: {view}", Style.DIM))
+    return "\n".join(lines)
+
+
+def _is_number(value) -> bool:
+    try:
+        float(value)
+        return True
+    except (TypeError, ValueError):
+        return False
 
 
 def _style_for_speaker(agent_id: str, speaker_styles: dict[str, str]) -> str:

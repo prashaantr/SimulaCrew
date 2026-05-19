@@ -246,6 +246,8 @@ The human running the CLI can see the independent thinking phase. The agents do 
 | group chat               | normal conversation where agents respond in turn    |
 | cut-in                   | an interruption rendered as "cuts in"               |
 | interruption score       | private estimate of how likely an agent is to cut in|
+| buy-in score             | how aligned each agent is with the emerging idea    |
+| current idea             | the idea the group appears to be converging on      |
 | convergence              | internal estimate that agents are aligned on goal   |
 | PRD recorder             | neutral final writer that turns discussion into PRD |
 | artifact                 | saved JSON and text output in runs/                 |
@@ -268,8 +270,9 @@ The human running the CLI can see the independent thinking phase. The agents do 
 +--------------------------------------------------------------------------------+
 | Agents see the public transcript only: messages that were actually spoken.      |
 | The engine chooses who speaks next from interruption pressure, recent silence,  |
-| and recent speaking history. A turn can become a normal "says", a "cuts in",   |
-| or a hidden "stays quiet" private note.                                        |
+| and recent speaking history. Early turns are protected so agents build on the   |
+| prior message before cut-ins begin. A turn can become a normal "says", a        |
+| "cuts in", or a hidden "stays quiet" private note.                             |
 +--------------------------------------------------------------------------------+
 
 +--------------------------------------------------------------------------------+
@@ -277,7 +280,7 @@ The human running the CLI can see the independent thinking phase. The agents do 
 +--------------------------------------------------------------------------------+
 | After public turns, the engine updates internal alignment toward the shared     |
 | goal. Live Claude runs can use an LLM evaluator; dry-run uses configured        |
-| fallback steps. This state is hidden unless --show-interruption-notes is used.  |
+| fallback steps. The CLI prints buy-in scores and the current idea after turns.  |
 +--------------------------------------------------------------------------------+
 
 +--------------------------------------------------------------------------------+
@@ -537,6 +540,15 @@ Internal interruption scores and classifier notes are hidden by default because 
 simulacrew run configs/simulacra.json --show-interruption-notes
 ```
 
+The normal CLI shows buy-in and current idea state after public group-chat turns:
+
+```text
+◇ buy-in  june 43%  mara 56%  niko 37%  sol 45%
+◇ idea    voice-first job-skills matcher for displaced workers
+```
+
+With `--show-interruption-notes`, the CLI also prints each agent's internal view of what the idea is. This helps catch cases where agents appear to agree but are actually imagining different products.
+
 ## Convergence And The 20-Minute Cap
 
 The default task is:
@@ -557,7 +569,8 @@ This is configured in `configs/simulacra.json` under `topic.variables`:
   "default_goal_alignment_start": 0.42,
   "goal_alignment_step_self": 0.055,
   "goal_alignment_step_listener": 0.025,
-  "goal_alignment_interrupt_factor": 0.65
+  "goal_alignment_interrupt_factor": 0.65,
+  "min_public_turns_before_interruptions": 3
 }
 ```
 
@@ -567,6 +580,8 @@ The discussion stops when either:
 - the 20-minute discussion cap is reached between turns.
 
 Convergence is not based on hard-coded words like "agree" or "risk." In live Claude runs, the LLM evaluator reads the transcript, personas, shared goal, and current state, then returns per-agent alignment as JSON. In dry-run mode, SimulaCrew uses the configured fallback step sizes so local tests can run without an API key.
+
+Cut-ins are delayed by `min_public_turns_before_interruptions` so the first few group-chat turns build on what was said before. After that, high-interruption personas can cut in when the classifier says there is enough contestation pressure.
 
 Per-agent starting alignment goes in `agents[].personality.goal_alignment_start`:
 
