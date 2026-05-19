@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "simulacrew"
+version = "0.1.0"
+description = "Personality-driven multi-agent debate and deliberation harness."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+openai = ["openai>=1.0.0"]
+claude = ["claude-agent-sdk>=0.1.19"]
+dev = []
+
+[project.scripts]
+simulacrew = "simula_crew.cli:main"
+agent-cli = "simula_crew.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
