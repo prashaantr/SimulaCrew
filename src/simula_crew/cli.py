@@ -316,11 +316,10 @@ def _live_event_printer(*, show_interruption_notes: bool = False):
             return
 
         if event_type == "alignment_update":
-            print(_buy_in_status(payload), flush=True)
-            if show_interruption_notes:
-                views = _idea_views_status(payload)
-                if views:
-                    print(views, flush=True)
+            print(_buy_in_status(payload, speaker_styles), flush=True)
+            views = _idea_views_status(payload, speaker_styles)
+            if views:
+                print(views, flush=True)
             return
 
         if event_type == "goal_aligned":
@@ -400,30 +399,37 @@ def _score_text(score) -> str:
         return f" | interrupt {score}/10"
 
 
-def _buy_in_status(payload: dict) -> str:
+def _buy_in_status(payload: dict, speaker_styles: dict[str, str]) -> str:
     current_idea = str(payload.get("current_idea") or "No concrete idea yet.")
     by_agent = payload.get("by_agent") or {}
     if isinstance(by_agent, dict) and by_agent:
-        scores = "  ".join(
-            f"{agent_id} {float(score):.0%}"
-            for agent_id, score in sorted(by_agent.items())
-            if _is_number(score)
-        )
+        score_parts = []
+        for agent_id, score in sorted(by_agent.items()):
+            if not _is_number(score):
+                continue
+            style = _style_for_speaker(str(agent_id), speaker_styles)
+            score_parts.append(color(f"{agent_id} {float(score):.0%}", style + Style.BOLD))
+        scores = "  ".join(score_parts)
     else:
         scores = str(payload.get("summary") or "no scores yet")
-    return color(f"◇ buy-in  {scores}", Style.DIM) + "\n" + color(
+    return color("◇ buy-in  ", Style.DIM) + scores + "\n" + color(
         f"◇ idea    {current_idea}",
         Style.DIM,
     )
 
 
-def _idea_views_status(payload: dict) -> str:
+def _idea_views_status(payload: dict, speaker_styles: dict[str, str]) -> str:
     views = payload.get("agent_idea_views") or {}
     if not isinstance(views, dict) or not views:
         return ""
     lines = [color("◇ agent idea views", Style.DIM)]
     for agent_id, view in sorted(views.items()):
-        lines.append(color(f"  {agent_id}: {view}", Style.DIM))
+        style = _style_for_speaker(str(agent_id), speaker_styles)
+        lines.append(
+            "  "
+            + color(f"{agent_id}: ", style + Style.BOLD)
+            + color(str(view), Style.DIM)
+        )
     return "\n".join(lines)
 
 

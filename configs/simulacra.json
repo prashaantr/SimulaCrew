@@ -27,6 +27,8 @@
       "goal_alignment_step_listener": 0.025,
       "goal_alignment_interrupt_factor": 0.65,
       "min_public_turns_before_interruptions": 3,
+      "idea_state_model": "haiku",
+      "idea_state_workers": 4,
       "private_thinking_workers": 4
     }
   },

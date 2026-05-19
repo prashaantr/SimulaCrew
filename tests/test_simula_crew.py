@@ -39,6 +39,33 @@ class PromptRecordingClient:
         return f"public-message-{agent_id}"
 
 
+class AgentStateClient:
+    provider = "claude"
+
+    def __init__(self) -> None:
+        self.calls = []
+
+    def complete(self, *, system_prompt, user_prompt, model, temperature=0.2, metadata=None):
+        metadata = metadata or {}
+        self.calls.append({"metadata": metadata, "model": model, "user_prompt": user_prompt})
+        event_type = metadata.get("event_type")
+        agent_id = metadata.get("agent_id", "recorder")
+        if event_type == "idea_state_evaluation":
+            buy_in = 0.88 if agent_id == "mara" else 0.42
+            return json.dumps(
+                {
+                    "idea": f"{agent_id} concept",
+                    "buy_in": buy_in,
+                    "rationale": f"{agent_id} updated their private idea state.",
+                }
+            )
+        if event_type == "private":
+            return f"private-secret-{agent_id}"
+        if event_type == "synthesis":
+            return "# PRD\n\nThe group chose one buildable idea."
+        return f"public-message-{agent_id}"
+
+
 class ConfigTests(unittest.TestCase):
     def test_simulacra_config_loads(self) -> None:
         config = load_config(REPO_ROOT / "configs" / "simulacra.json")
@@ -211,6 +238,45 @@ class EngineTests(unittest.TestCase):
         self.assertNotIn("private-secret-niko", mara_call["user_prompt"])
         self.assertIn("private-secret-niko", niko_call["user_prompt"])
         self.assertNotIn("private-secret-mara", niko_call["user_prompt"])
+
+    def test_claude_idea_state_updates_are_per_agent_and_haiku(self) -> None:
+        config = load_config(REPO_ROOT / "configs" / "simulacra.json")
+        client = AgentStateClient()
+        result = run_crew(
+            config=config,
+            client=client,
+            model="opus",
+            max_agents=2,
+        )
+        state_calls = [
+            call
+            for call in client.calls
+            if call["metadata"].get("event_type") == "idea_state_evaluation"
+        ]
+        self.assertTrue(state_calls)
+        self.assertTrue(all(call["model"] == "haiku" for call in state_calls))
+        self.assertGreaterEqual(
+            len({call["metadata"].get("agent_id") for call in state_calls}),
+            2,
+        )
+        group_round = next(
+            round_result
+            for round_result in result.rounds
+            if round_result.id == "group_chat"
+        )
+        first_public = next(
+            statement
+            for statement in group_round.statements
+            if statement.event_type != "thought"
+        )
+        self.assertEqual(
+            first_public.metadata["agent_idea_views"]["mara"],
+            "mara concept",
+        )
+        self.assertEqual(
+            first_public.metadata["agent_idea_views"]["niko"],
+            "niko concept",
+        )
 
 
 if __name__ == "__main__":

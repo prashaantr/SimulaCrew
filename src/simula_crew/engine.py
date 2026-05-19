@@ -319,6 +319,7 @@ def _run_group_round(
             client=client,
             model=model,
             transcript=_public_transcript([*transcript, *statements, statement]),
+            private_memory=private_memory,
         )
         _emit(
             event_callback,
@@ -960,6 +961,7 @@ class GoalTracker:
         client: ModelClient,
         model: str,
         transcript: list[Statement],
+        private_memory: dict[str, list[str]],
     ) -> None:
         if statement.event_type in {"thought", "private", "synthesis"}:
             self.attach_metadata(statement)
@@ -970,18 +972,19 @@ class GoalTracker:
         source = "config-fallback"
         rationale = "Fallback alignment update from configured step sizes."
         if self.evaluator == "llm" and client.provider != "dry-run":
-            evaluation = self._evaluate_with_llm(
+            agent_states = self._evaluate_agent_states_with_llm(
                 statement=statement,
                 agents=agents,
                 config=config,
                 client=client,
                 model=model,
                 transcript=transcript,
+                private_memory=private_memory,
             )
-            if evaluation:
-                source = "llm"
-                rationale = evaluation.get("rationale", "LLM convergence evaluator.")
-                self._apply_evaluated_alignment(evaluation, before)
+            if agent_states:
+                source = "llm-agent-states"
+                rationale = "Parallel per-agent idea and buy-in state update."
+                self._apply_agent_states(agent_states, before)
             else:
                 self._apply_fallback_alignment(statement)
         else:
@@ -997,11 +1000,14 @@ class GoalTracker:
         }
         statement.metadata["goal_alignment_source"] = source
         statement.metadata["goal_alignment_rationale"] = rationale
+        statement.metadata["agent_state_rationales"] = {
+            agent_id: state.get("rationale", "")
+            for agent_id, state in getattr(self, "_last_agent_states", {}).items()
+        }
 
     def _apply_fallback_alignment(self, statement: Statement) -> None:
         factor = self.fallback_interrupt_factor if statement.event_type == "interrupt" else 1.0
-        self.current_idea = _fallback_current_idea(statement)
-        self.agent_idea_views[statement.agent_id] = self.current_idea
+        self.agent_idea_views[statement.agent_id] = _fallback_current_idea(statement)
         for agent_id in self.alignments:
             step = self.fallback_self_step if agent_id == statement.agent_id else self.fallback_listener_step
             self.alignments[agent_id] = _clamp_float(
@@ -1009,32 +1015,33 @@ class GoalTracker:
                 0.0,
                 1.0,
             )
+        self.current_idea = _derive_current_idea(
+            alignments=self.alignments,
+            views=self.agent_idea_views,
+        )
 
-    def _apply_evaluated_alignment(
+    def _apply_agent_states(
         self,
-        evaluation: dict[str, Any],
+        agent_states: dict[str, dict[str, Any]],
         before: dict[str, float],
     ) -> None:
-        by_agent = evaluation.get("by_agent", {})
-        if not isinstance(by_agent, dict):
-            return
-        current_idea = evaluation.get("current_idea")
-        if isinstance(current_idea, str) and current_idea.strip():
-            self.current_idea = current_idea.strip()
-        agent_views = evaluation.get("agent_views", {})
-        if isinstance(agent_views, dict):
-            for agent_id in before:
-                view = agent_views.get(agent_id)
-                if isinstance(view, str) and view.strip():
-                    self.agent_idea_views[agent_id] = view.strip()
+        self._last_agent_states = agent_states
         for agent_id, prior_score in before.items():
+            state = agent_states.get(agent_id, {})
+            view = state.get("idea")
+            if isinstance(view, str) and view.strip():
+                self.agent_idea_views[agent_id] = view.strip()
             self.alignments[agent_id] = _clamp_float(
-                _number(by_agent.get(agent_id), prior_score),
+                _number(state.get("buy_in"), prior_score),
                 0.0,
                 1.0,
             )
+        self.current_idea = _derive_current_idea(
+            alignments=self.alignments,
+            views=self.agent_idea_views,
+        )
 
-    def _evaluate_with_llm(
+    def _evaluate_agent_states_with_llm(
         self,
         *,
         statement: Statement,
@@ -1043,66 +1050,118 @@ class GoalTracker:
         client: ModelClient,
         model: str,
         transcript: list[Statement],
-    ) -> dict[str, Any] | None:
-        system_prompt = (
-            "You evaluate whether a working group is converging on its shared goal. "
-            "Do not use keyword matching. Judge the actual transcript, each persona, "
-            "and whether the group has enough agreement to move from discussion to a PRD. "
-            "Return compact JSON only."
+        private_memory: dict[str, list[str]],
+    ) -> dict[str, dict[str, Any]] | None:
+        workers = min(
+            len(agents),
+            max(
+                1,
+                int(_number(config.topic.variables.get("idea_state_workers"), len(agents))),
+            ),
         )
-        agent_lines = "\n".join(
-            f"- {agent.id} ({agent.name}): goals={agent.goals}; constraints={agent.constraints}; "
-            f"personality={json.dumps(agent.personality, sort_keys=True)}"
-            for agent in agents
+        state_model = _idea_state_model(config=config, client=client, model=model)
+        states: dict[str, dict[str, Any]] = {}
+        try:
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                futures = {
+                    executor.submit(
+                        self._evaluate_one_agent_state,
+                        agent=agent,
+                        config=config,
+                        client=client,
+                        model=state_model,
+                        transcript=transcript,
+                        statement=statement,
+                        private_notes=private_memory.get(agent.id, []),
+                    ): agent
+                    for agent in agents
+                }
+                for future in as_completed(futures):
+                    agent = futures[future]
+                    states[agent.id] = future.result()
+        except Exception as exc:
+            statement.metadata["goal_alignment_evaluator_error"] = str(exc)
+            return None
+        return states if states else None
+
+    def _evaluate_one_agent_state(
+        self,
+        *,
+        agent: AgentPersona,
+        config: CrewConfig,
+        client: ModelClient,
+        model: str,
+        transcript: list[Statement],
+        statement: Statement,
+        private_notes: list[str],
+    ) -> dict[str, Any]:
+        system_prompt = "\n\n".join(
+            part
+            for part in [
+                build_agent_system_prompt(config, agent),
+                (
+                    "You are not speaking to the group. You are updating this "
+                    "agent's private state after a public turn. Return compact "
+                    "JSON only."
+                ),
+            ]
+            if part.strip()
         )
         user_prompt = f"""
 Shared goal:
 {self.goal}
 
-Stop threshold:
-Each active agent should be at or above {self.threshold:.2f} alignment after at least {self.min_turns} public turns.
+Agent:
+- id: {agent.id}
+- name: {agent.name}
 
-Agents:
-{agent_lines}
+Previous private idea view for this agent:
+{self.agent_idea_views.get(agent.id, self.current_idea)}
 
-Current alignment state:
-{json.dumps(self.alignments, sort_keys=True)}
+Previous buy-in for this agent:
+{self.alignments.get(agent.id, self.average):.2f}
 
 Latest public statement:
 {statement.agent_name}: {statement.content}
+
+Private notes for this agent:
+{_format_private_memory(private_notes)}
 
 Transcript:
 {format_transcript(transcript, visibility="named")}
 
 Return JSON with this shape:
 {{
-  "by_agent": {{"agent_id": 0.0}},
-  "current_idea": "one short phrase describing the idea the group is currently converging on, or 'No concrete idea yet'",
-  "agent_views": {{"agent_id": "one short phrase describing what this agent seems to think the idea is"}},
-  "aligned": false,
-  "rationale": "one sentence about the convergence state"
+  "idea": "one short phrase describing what this agent currently thinks the proposal is",
+  "buy_in": 0.0,
+  "rationale": "one sentence explaining why this agent's buy-in moved or stayed still"
 }}
 
-The by_agent and agent_views objects must include every active agent id. Each by_agent value must be a number from 0.0 to 1.0.
+Buy-in is 0.0 to 1.0. It means how willing this agent is to move forward with the current idea as the PRD target.
 """
-        try:
-            raw = client.complete(
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
-                model=model,
-                temperature=0.0,
-                metadata={
-                    "agent_id": statement.agent_id,
-                    "agent_name": statement.agent_name,
-                    "round_id": statement.round_id,
-                    "turn_number": statement.turn_number,
-                    "event_type": "goal_alignment_evaluation",
-                },
-            )
-            return _extract_json_object(raw)
-        except Exception as exc:
-            statement.metadata["goal_alignment_evaluator_error"] = str(exc)
-            return None
+        raw = client.complete(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            model=model,
+            temperature=0.0,
+            metadata={
+                "agent_id": agent.id,
+                "agent_name": agent.name,
+                "round_id": statement.round_id,
+                "turn_number": statement.turn_number,
+                "event_type": "idea_state_evaluation",
+            },
+        )
+        payload = _extract_json_object(raw)
+        return {
+            "idea": str(payload.get("idea", self.agent_idea_views.get(agent.id, self.current_idea))),
+            "buy_in": _clamp_float(
+                _number(payload.get("buy_in"), self.alignments.get(agent.id, self.average)),
+                0.0,
+                1.0,
+            ),
+            "rationale": str(payload.get("rationale", "")),
+        }
 
 
 def _discussion_time_limit_seconds(variables: dict[str, Any]) -> int:
@@ -1112,6 +1171,31 @@ def _discussion_time_limit_seconds(variables: dict[str, Any]) -> int:
         minutes = _number(variables.get("discussion_time_limit_minutes"), 20.0)
         return max(1, int(minutes * 60))
     return 20 * 60
+
+
+def _idea_state_model(*, config: CrewConfig, client: ModelClient, model: str) -> str:
+    configured = config.topic.variables.get("idea_state_model")
+    if configured:
+        return str(configured)
+    if client.provider == "claude":
+        return "haiku"
+    return model
+
+
+def _derive_current_idea(
+    *,
+    alignments: dict[str, float],
+    views: dict[str, str],
+) -> str:
+    candidates = [
+        (alignments.get(agent_id, 0.0), view.strip())
+        for agent_id, view in views.items()
+        if view and view.strip()
+    ]
+    if not candidates:
+        return "No concrete idea yet."
+    _, view = max(candidates, key=lambda item: item[0])
+    return view
 
 
 def _format_seconds(seconds: int) -> str:

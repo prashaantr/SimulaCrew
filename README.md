@@ -256,7 +256,8 @@ The human running the CLI can see the independent thinking phase. The agents do 
 | current idea             | the idea the group appears to be converging on      |
 | agent idea view          | what one agent seems to think the current idea is   |
 | convergence              | internal estimate that agents are aligned on goal   |
-| alignment evaluator      | LLM or fallback process that updates buy-in state   |
+| agent state evaluator    | per-agent LLM call for idea view and buy-in         |
+| alignment evaluator      | state updater that checks whether buy-in is enough  |
 | fallback steps           | deterministic buy-in updates for dry-run/testing    |
 | discussion cap           | hard time limit before moving to PRD synthesis      |
 | show-interruption-notes  | CLI flag for classifier notes and agent idea views  |
@@ -560,7 +561,31 @@ The normal CLI shows buy-in and current idea state after public group-chat turns
 ◇ idea    voice-first job-skills matcher for displaced workers
 ```
 
-With `--show-interruption-notes`, the CLI also prints each agent's internal view of what the idea is. This helps catch cases where agents appear to agree but are actually imagining different products.
+The CLI also prints each agent's internal view of what the idea is. This helps catch cases where agents appear to agree but are actually imagining different products.
+
+## How Agents Decide To Stay Quiet
+
+Staying quiet is a real action, not a missing turn. During group chat, the scheduler first chooses who has the strongest reason to respond. That agent can still decide not to speak if the current moment does not justify a public message.
+
+```text
++---------------------+       +---------------------+       +---------------------+
+| candidate speaker   | ----> | quiet probability   | ----> | speak or store note |
++---------------------+       +---------------------+       +---------------------+
+          |                             |
+          v                             v
+  interruption pressure          patience, low urgency,
+  recent transcript              lower assertiveness,
+  recent speaker history         lower extraversion
+```
+
+An agent will not stay quiet when:
+
+- it is the first group-chat turn,
+- the interruption classifier says it strongly needs to cut in,
+- its interruption score is high,
+- it was the last public speaker.
+
+If it does stay quiet, SimulaCrew asks the agent for one private thought. That thought is stored in the same agent's private memory and can shape its next spoken turn. Other agents cannot see it unless the agent later says it out loud.
 
 ## How The Idea And Percentages Work
 
@@ -579,8 +604,8 @@ SimulaCrew does not pick the idea by taking the last sentence someone said. The 
           +-------------------------+-------------------------+
                                     v
                          +----------------------+
-                         | convergence evaluator|
-                         | updates room state   |
+                         | agent state evaluators|
+                         | update room state     |
                          +----------+-----------+
                                     |
                                     v
@@ -629,37 +654,40 @@ If the 20-minute discussion cap hits first, the recorder writes the PRD from the
 
 ### Live Claude Runs
 
-When running with Claude and `goal_alignment_evaluator: "llm"`, the evaluator receives:
+When running with Claude and `goal_alignment_evaluator: "llm"`, SimulaCrew runs one state evaluator per agent after each public turn. These state updates are parallel and use the configured fast model, which defaults to the Claude SDK `haiku` alias.
 
-- the shared goal,
-- all active personas,
-- current buy-in scores,
+Each agent state evaluator receives:
+
+- that agent's persona,
+- that agent's private notes,
+- that agent's previous idea view,
+- that agent's previous buy-in,
 - the latest public statement,
-- the public transcript.
+- the public transcript,
+- the shared goal.
 
-It returns compact JSON:
+Each evaluator returns compact JSON:
 
 ```json
 {
-  "by_agent": {
-    "mara": 0.56,
-    "niko": 0.37,
-    "sol": 0.45,
-    "june": 0.43
-  },
-  "current_idea": "voice-first job-skills matcher for displaced workers",
-  "agent_views": {
-    "mara": "fast demo for displaced workers",
-    "niko": "skills matcher needing grounded job data",
-    "sol": "mobility tool connecting experience to next roles",
-    "june": "simple worker-facing demo"
-  },
-  "aligned": false,
-  "rationale": "The group has a candidate idea, but Niko still needs evidence quality resolved."
+  "idea": "skills matcher needing grounded job data",
+  "buy_in": 0.37,
+  "rationale": "Niko sees a promising direction but is not convinced the job data is real enough."
 }
 ```
 
-Those values become the next turn's private context and the CLI buy-in display.
+Those per-agent values become the next turn's private context and the CLI buy-in display. The shared `idea` line is derived from the agent idea views and buy-in scores. The full per-agent views are printed underneath it.
+
+Configure this in `configs/simulacra.json`:
+
+```json
+{
+  "idea_state_model": "haiku",
+  "idea_state_workers": 4
+}
+```
+
+Anthropic's Claude Code/Agent SDK model configuration documents `haiku` as the fast Haiku alias. If Anthropic later publishes a specific full model ID you want, put that value in `idea_state_model`.
 
 ### Dry-Run Mode
 
@@ -668,7 +696,9 @@ Dry-run mode does not call an LLM evaluator. It uses deterministic fallback valu
 - the speaker's buy-in increases by `goal_alignment_step_self`,
 - listeners increase by `goal_alignment_step_listener`,
 - interruptions are damped by `goal_alignment_interrupt_factor`,
-- the visible `idea` line is a simple placeholder derived from the latest public statement.
+- the speaker's idea view updates from its latest public statement,
+- listener idea views stay separate until their own turns update them,
+- the visible shared `idea` is derived from the highest buy-in agent view.
 
 Dry-run percentages are useful for testing the mechanics. For realistic idea tracking, use Claude with the LLM convergence evaluator.
 
