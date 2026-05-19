@@ -1,0 +1,10 @@
+name: buildathon
+description: |
+  Overview: Your team is participating in the Wharton–Gates Build-a-thon, which is a hackathon-like event taking place alongside the AI and the Future of Work Conference, held at the Wharton School, University of Pennsylvania. The goal of the Build-a-thon is to develop projects focused on the future of work. Teams will work collaboratively throughout the day to produce outputs that can be shared on GitHub. Each team will present one slide as a demo during the conference’s closing session.
+
+  Deliverable: The team’s goal is to scope a project that is executable within a single work day (roughly 5 hours), and that can be presented in a demo by the end of the three-day conference. The demo should be interesting and relevant to an interdisciplinary audience on AI and the future of work.
+
+  The format of the deliverable should be a markdown-formatted text string describing the project and its intended scope and details, as well as a breakdown of the tasks required to execute the project and an allocation of who will complete each task. The document should be clear, concise, and represent a realistic, executable plan for the project given the timeline.
+task: ../tasks/buildathon.json
+process: ../processes/buildathon.json
+agents: ../agents/agents_buildathon.json

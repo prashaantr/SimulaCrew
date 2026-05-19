@@ -10,6 +10,8 @@ dist/
 build/
 *.egg-info/
 .env
+configs/agents/agents_buildathon.json
+configs/agents/agents_buildathon_subset.json
 web/.env.local
 web/data/
 web/node_modules/

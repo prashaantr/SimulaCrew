@@ -1,0 +1,38 @@
+{
+  "title": "Build a Thon",
+  "prompt": "Overview: Your team is participating in the Wharton–Gates Build-a-thon, which is a hackathon-like event taking place alongside the AI and the Future of Work Conference, held at the Wharton School, University of Pennsylvania. The goal of the Build-a-thon is to develop projects focused on the future of work. Teams will work collaboratively throughout the day to produce outputs that can be shared on GitHub. Each team will present one slide as a demo during the conference’s closing session.\n\nDeliverable: The team’s goal is to scope a project that is executable within a single work day (roughly 5 hours), and that can be presented in a demo by the end of the three-day conference. The demo should be interesting and relevant to an interdisciplinary audience on AI and the future of work.\n\nThe format of the deliverable should be a markdown-formatted text string describing the project and its intended scope and details, as well as a breakdown of the tasks required to execute the project and an allocation of who will complete each task. The document should be clear, concise, and represent a realistic, executable plan for the project given the timeline.",
+  "target_user": "Academic researchers and industry practitioners interested in AI and the future of work, attending the conference.",
+  "success_criteria": "A focused, feasible project scope with clear tasks, realistic ownership, and a demo plan suitable for a single work day.",
+  "output_format": {
+    "type": "markdown",
+    "description": "Final synthesis must be a concise project brief in Markdown. Include: project overview, problem, proposed solution, intended scope, task breakdown, team allocation, demo plan, risks, and open questions. Preserve any unresolved dissent briefly.",
+    "required_sections": [
+      "project overview",
+      "problem",
+      "proposed solution",
+      "intended scope",
+      "task breakdown",
+      "team allocation",
+      "demo plan",
+      "risks",
+      "open questions"
+    ]
+  },
+  "variables": {
+    "time_budget": "Single work day (~5 hours) with a demo by end of the three-day conference",
+    "discussion_time_limit_minutes": 30,
+    "decision_pressure": "The team needs a clear, feasible scope today.",
+    "shared_goal": "Converge on one buildathon project idea and produce a concise execution plan with task assignments.",
+    "default_goal_alignment_start": 0.42,
+    "goal_alignment_threshold": 0.75,
+    "goal_alignment_min_turns": 8,
+    "goal_alignment_evaluator": "llm",
+    "goal_alignment_step_self": 0.055,
+    "goal_alignment_step_listener": 0.025,
+    "goal_alignment_interrupt_factor": 0.65,
+    "min_public_turns_before_interruptions": 3,
+    "idea_state_model": "haiku",
+    "idea_state_workers": 4,
+    "private_thinking_workers": 4
+  }
+}
